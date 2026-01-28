@@ -1,0 +1,951 @@
+[
+  {
+    "id": 1,
+    "tag": "movimientos_tronco",
+    "question": "¿Qué movimiento del tronco describe el desplazamiento hacia delante?",
+    "options": [
+      "Extensión",
+      "Flexión",
+      "Rotación",
+      "Inclinación lateral"
+    ],
+    "answer_index": 1,
+    "explanation": "La flexión del tronco ocurre cuando el tronco se desplaza hacia delante. La extensión es el desplazamiento hacia atrás."
+  },
+  {
+    "id": 2,
+    "tag": "movimientos_tronco",
+    "question": "¿Qué movimiento del tronco describe el desplazamiento hacia atrás?",
+    "options": [
+      "Extensión",
+      "Flexión",
+      "Rotación",
+      "Lateralización"
+    ],
+    "answer_index": 0,
+    "explanation": "La extensión del tronco es el movimiento hacia atrás. La flexión es hacia delante."
+  },
+  {
+    "id": 3,
+    "tag": "movimientos_tronco",
+    "question": "¿Cuál es un sinónimo aceptado de la inclinación lateral del tronco en el temario?",
+    "options": [
+      "Lateroflexión",
+      "Supinación",
+      "Pronación",
+      "Aducción"
+    ],
+    "answer_index": 0,
+    "explanation": "Inclinación lateral, lateralización y lateroflexión se usan como equivalentes. Supinación/pronación son de antebrazo y pie."
+  },
+  {
+    "id": 4,
+    "tag": "movimientos_tronco",
+    "question": "¿Qué diferencia clave se usa para distinguir rotación vs inclinación lateral del tronco?",
+    "options": [
+      "En la rotación cambia la orientación de la mirada, en la inclinación lateral no",
+      "En la inclinación lateral siempre hay flexión",
+      "En la rotación no participan las vértebras",
+      "En la inclinación lateral no hay movimiento"
+    ],
+    "answer_index": 0,
+    "explanation": "En rotación se deja de mirar al frente para girar a derecha/izquierda. En la inclinación lateral el tronco se inclina sin ese giro de mirada."
+  },
+  {
+    "id": 5,
+    "tag": "columna_general",
+    "question": "¿Cuántas vértebras cervicales tiene la columna vertebral?",
+    "options": [
+      "5",
+      "7",
+      "12",
+      "6"
+    ],
+    "answer_index": 1,
+    "explanation": "La columna cervical está compuesta por 7 vértebras: C1 a C7. Es un dato básico de memorización."
+  },
+  {
+    "id": 6,
+    "tag": "columna_general",
+    "question": "¿Cuántas vértebras dorsales/torácicas tiene la columna vertebral?",
+    "options": [
+      "10",
+      "11",
+      "12",
+      "13"
+    ],
+    "answer_index": 2,
+    "explanation": "La columna dorsal o torácica tiene 12 vértebras (T1–T12). Se corresponde con la región donde articulan las costillas."
+  },
+  {
+    "id": 7,
+    "tag": "columna_general",
+    "question": "¿Cuántas vértebras lumbares tiene la columna vertebral?",
+    "options": [
+      "4",
+      "5",
+      "6",
+      "7"
+    ],
+    "answer_index": 1,
+    "explanation": "La columna lumbar tiene 5 vértebras (L1–L5). Sus cuerpos vertebrales son más voluminosos por soportar más carga."
+  },
+  {
+    "id": 8,
+    "tag": "columna_general",
+    "question": "¿Qué afirmación es más precisa sobre el sacro?",
+    "options": [
+      "Tiene 5 vértebras sacras fusionadas entre sí",
+      "Tiene 5 vértebras sacras móviles entre sí",
+      "Tiene 3 vértebras sacras fusionadas",
+      "No forma parte de la pelvis"
+    ],
+    "answer_index": 0,
+    "explanation": "El sacro está formado por 5 vértebras sacras fusionadas. Es un hueso del anillo pélvico."
+  },
+  {
+    "id": 9,
+    "tag": "columna_general",
+    "question": "¿Cuántas vértebras coxígeas son más comunes según el temario?",
+    "options": [
+      "1–2",
+      "3–5",
+      "6–8",
+      "Siempre 5"
+    ],
+    "answer_index": 1,
+    "explanation": "Lo más habitual es 3 a 5 vértebras coxígeas, fusionadas entre sí. Puede variar según el individuo."
+  },
+  {
+    "id": 10,
+    "tag": "columna_general",
+    "question": "¿Cuál NO es una función principal de la columna vertebral en este temario?",
+    "options": [
+      "Permitir movilidad (estática y dinámica) del tronco",
+      "Servir de soporte a estructuras",
+      "Proteger la médula espinal",
+      "Producir sangre en médula ósea"
+    ],
+    "answer_index": 3,
+    "explanation": "La hematopoyesis es función de médula ósea, no de la columna como sistema. En el temario: movimiento, soporte y protección de la médula espinal."
+  },
+  {
+    "id": 11,
+    "tag": "columna_general",
+    "question": "La lordosis se define como una curvatura de:",
+    "options": [
+      "Convexidad anterior",
+      "Convexidad posterior",
+      "Concavidad anterior",
+      "Curvatura lateral"
+    ],
+    "answer_index": 0,
+    "explanation": "Lordosis = convexidad anterior (equivalente a concavidad posterior). Se observa en regiones cervical y lumbar."
+  },
+  {
+    "id": 12,
+    "tag": "columna_general",
+    "question": "La cifosis se define como una curvatura de:",
+    "options": [
+      "Convexidad posterior",
+      "Convexidad anterior",
+      "Concavidad posterior",
+      "Curvatura axial"
+    ],
+    "answer_index": 0,
+    "explanation": "Cifosis = convexidad posterior (equivalente a concavidad anterior). Se observa en región dorsal y sacrocoxígea."
+  },
+  {
+    "id": 13,
+    "tag": "columna_general",
+    "question": "¿En qué regiones se encuentra lordosis fisiológica?",
+    "options": [
+      "Cervical y lumbar",
+      "Dorsal y sacrocoxígea",
+      "Cervical y dorsal",
+      "Lumbar y dorsal"
+    ],
+    "answer_index": 0,
+    "explanation": "La lordosis fisiológica aparece en cervical y lumbar. La cifosis fisiológica aparece en dorsal y sacrocoxígea."
+  },
+  {
+    "id": 14,
+    "tag": "columna_general",
+    "question": "¿En qué regiones se encuentra cifosis fisiológica?",
+    "options": [
+      "Dorsal y sacrocoxígea",
+      "Cervical y lumbar",
+      "Cervical y sacrocoxígea",
+      "Lumbar y torácica anterior"
+    ],
+    "answer_index": 0,
+    "explanation": "La cifosis fisiológica está en columna dorsal y región sacrocoxígea. Es una convexidad posterior."
+  },
+  {
+    "id": 15,
+    "tag": "vertebra_anatomia",
+    "question": "La parte de mayor volumen óseo en una vértebra, situada anterior, es:",
+    "options": [
+      "Pedículo",
+      "Cuerpo vertebral",
+      "Lámina",
+      "Apófisis espinosa"
+    ],
+    "answer_index": 1,
+    "explanation": "El cuerpo vertebral es la porción anterior y principal soporte de peso. Pedículos y láminas forman el arco vertebral."
+  },
+  {
+    "id": 16,
+    "tag": "vertebra_anatomia",
+    "question": "¿Qué estructura contribuye principalmente a proteger la médula espinal formando el anillo posterior al cuerpo?",
+    "options": [
+      "Cartílago costal",
+      "Arco vertebral (pedículos y láminas)",
+      "Manubrio esternal",
+      "Agujero transverso"
+    ],
+    "answer_index": 1,
+    "explanation": "El arco vertebral, formado por pedículos y láminas (más apófisis y articulaciones), delimita el agujero vertebral y protege la médula espinal."
+  },
+  {
+    "id": 17,
+    "tag": "vertebra_anatomia",
+    "question": "Las apófisis transversas y la apófisis espinosa sirven principalmente para:",
+    "options": [
+      "Anclaje de músculos y ligamentos",
+      "Sostener el peso corporal",
+      "Alojar el núcleo pulposo",
+      "Formar la sínfisis púbica"
+    ],
+    "answer_index": 0,
+    "explanation": "Las apófisis son prominencias óseas para inserción muscular y ligamentosa. El peso recae sobre todo en los cuerpos vertebrales."
+  },
+  {
+    "id": 18,
+    "tag": "vertebra_anatomia",
+    "question": "¿Qué pasa por el agujero vertebral?",
+    "options": [
+      "Nervios raquídeos",
+      "Médula espinal",
+      "Arteria subclavia",
+      "Plexo braquial"
+    ],
+    "answer_index": 1,
+    "explanation": "Por el agujero vertebral discurre la médula espinal. Los nervios raquídeos salen por los agujeros de conjunción."
+  },
+  {
+    "id": 19,
+    "tag": "vertebra_anatomia",
+    "question": "¿Qué pasa por el agujero de conjunción?",
+    "options": [
+      "Médula espinal",
+      "Nervios raquídeos",
+      "Centro frénico",
+      "Arterias coronarias"
+    ],
+    "answer_index": 1,
+    "explanation": "Por los agujeros de conjunción salen los nervios raquídeos. El canal vertebral aloja la médula espinal."
+  },
+  {
+    "id": 20,
+    "tag": "vertebra_anatomia",
+    "question": "Las articulaciones cigapofisarias (interapofisarias) se producen entre:",
+    "options": [
+      "Carillas articulares de las apófisis articulares",
+      "Cuerpos vertebrales y discos",
+      "Costillas y esternón",
+      "Sacro y coxis"
+    ],
+    "answer_index": 0,
+    "explanation": "Las cigapofisarias se dan entre las carillas articulares de las apófisis articulares de vértebras adyacentes. Son articulaciones posteriores."
+  },
+  {
+    "id": 21,
+    "tag": "vertebra_anatomia",
+    "question": "¿Cuál es la función principal del disco intervertebral en este temario?",
+    "options": [
+      "Producir líquido sinovial",
+      "Absorber y distribuir fuerzas/cargas",
+      "Inervar la piel del tronco",
+      "Unir costillas al esternón"
+    ],
+    "answer_index": 1,
+    "explanation": "El disco intervertebral absorbe y reparte cargas (amortiguación). Su patología se explica como compresión de estructuras vecinas."
+  },
+  {
+    "id": 22,
+    "tag": "vertebra_anatomia",
+    "question": "Según el vídeo, el primer disco intervertebral se encuentra entre:",
+    "options": [
+      "C1–C2",
+      "C2–C3",
+      "C7–T1",
+      "T1–T2"
+    ],
+    "answer_index": 1,
+    "explanation": "El primer disco intervertebral se localiza entre C2 y C3. C1 (atlas) y C2 (axis) tienen características especiales."
+  },
+  {
+    "id": 23,
+    "tag": "vertebra_anatomia",
+    "question": "Según el vídeo, el último disco intervertebral se encuentra entre:",
+    "options": [
+      "L4–L5",
+      "L5–S1",
+      "S1–S2",
+      "Sacro–coxis"
+    ],
+    "answer_index": 1,
+    "explanation": "El último disco está entre L5 y S1 (primera sacra). En el sacro las vértebras están fusionadas."
+  },
+  {
+    "id": 24,
+    "tag": "vertebra_anatomia",
+    "question": "¿Qué afirmación es más precisa sobre la regeneración del disco intervertebral según el vídeo?",
+    "options": [
+      "Se regenera fácilmente por alta irrigación",
+      "No se regenera; la lesión tiende a ser degenerativa",
+      "Se regenera si hay reposo absoluto",
+      "Se regenera si se fortalece el core"
+    ],
+    "answer_index": 1,
+    "explanation": "El profesor indica que el disco no está irrigado, por lo que no se regenera; las lesiones son degenerativas. Se puede mejorar síntomas, no “reconstruir” el disco."
+  },
+  {
+    "id": 25,
+    "tag": "vertebra_anatomia",
+    "question": "En hernia discal, el dolor intenso se explica principalmente por:",
+    "options": [
+      "Dolor del disco por alta inervación",
+      "Compresión/irritación del nervio raquídeo cercano",
+      "Rotura del ligamento amarillo",
+      "Fractura del manubrio"
+    ],
+    "answer_index": 1,
+    "explanation": "El disco tiene inervación mínima; el dolor se asocia a la compresión del nervio raquídeo (p. ej., en el agujero de conjunción)."
+  },
+  {
+    "id": 26,
+    "tag": "ligamentos_columna",
+    "question": "El ligamento común anterior se localiza principalmente en:",
+    "options": [
+      "Cara anterior de los cuerpos vertebrales a lo largo de la columna",
+      "Entre las láminas",
+      "Entre apófisis espinosas",
+      "En el agujero transverso"
+    ],
+    "answer_index": 0,
+    "explanation": "El ligamento común anterior discurre por la cara anterior de los cuerpos vertebrales desde cervical hasta sacro. Limita la extensión."
+  },
+  {
+    "id": 27,
+    "tag": "ligamentos_columna",
+    "question": "La función principal del ligamento común anterior es limitar:",
+    "options": [
+      "Flexión",
+      "Extensión",
+      "Rotación",
+      "Inspiración"
+    ],
+    "answer_index": 1,
+    "explanation": "Al estar anterior, se tensa en extensión y la limita. La flexión se limita más por ligamentos posteriores."
+  },
+  {
+    "id": 28,
+    "tag": "ligamentos_columna",
+    "question": "El ligamento común posterior se localiza principalmente en:",
+    "options": [
+      "Cara posterior de los cuerpos vertebrales, dentro del canal vertebral",
+      "Cara anterior del esternón",
+      "Entre costillas",
+      "En la sínfisis púbica"
+    ],
+    "answer_index": 0,
+    "explanation": "El ligamento común posterior recorre la cara posterior de los cuerpos vertebrales por el canal vertebral (cerca de la médula). Limita flexión."
+  },
+  {
+    "id": 29,
+    "tag": "ligamentos_columna",
+    "question": "La función principal del ligamento común posterior es limitar:",
+    "options": [
+      "Flexión",
+      "Extensión",
+      "Nutación",
+      "Abducción"
+    ],
+    "answer_index": 0,
+    "explanation": "El ligamento común posterior se tensa en flexión y la limita. Es el opuesto funcional del ligamento común anterior."
+  },
+  {
+    "id": 30,
+    "tag": "ligamentos_columna",
+    "question": "El ligamento supraespinoso se encuentra:",
+    "options": [
+      "Uniendo los vértices de las apófisis espinosas",
+      "Entre apófisis transversas",
+      "En la cara anterior de cuerpos vertebrales",
+      "Entre cuerpos vertebrales"
+    ],
+    "answer_index": 0,
+    "explanation": "El supraespinoso recorre los vértices de las apófisis espinosas. Limita fuertemente la flexión evitando separación excesiva."
+  },
+  {
+    "id": 31,
+    "tag": "ligamentos_columna",
+    "question": "El ligamento intertransverso se localiza:",
+    "options": [
+      "Entre apófisis transversas",
+      "Entre apófisis espinosas",
+      "Entre láminas",
+      "Entre cartílagos costales"
+    ],
+    "answer_index": 0,
+    "explanation": "El intertransverso une apófisis transversas de vértebras adyacentes. Limita la inclinación lateral (y en cierta medida rotación)."
+  },
+  {
+    "id": 32,
+    "tag": "ligamentos_columna",
+    "question": "El ligamento amarillo se encuentra principalmente entre:",
+    "options": [
+      "Cuerpos vertebrales",
+      "Láminas",
+      "Apófisis transversas",
+      "Costillas y esternón"
+    ],
+    "answer_index": 1,
+    "explanation": "El ligamento amarillo recubre el espacio entre láminas, contribuyendo a la protección del canal vertebral. No se destaca por limitar movimientos como los otros."
+  },
+  {
+    "id": 33,
+    "tag": "pelvis_general",
+    "question": "¿Cuántos huesos conforman la pelvis según el temario?",
+    "options": [
+      "2",
+      "3",
+      "4",
+      "5"
+    ],
+    "answer_index": 2,
+    "explanation": "La pelvis se compone de 4 huesos: dos ilíacos (derecho e izquierdo), sacro y coxis."
+  },
+  {
+    "id": 34,
+    "tag": "pelvis_general",
+    "question": "El hueso ilíaco se divide en tres partes: ilion, pubis e isquion. ¿Desde qué referencia nacen estas tres partes?",
+    "options": [
+      "Cresta ilíaca",
+      "Acetábulo (cotilo)",
+      "Sínfisis púbica",
+      "Escotadura ciática"
+    ],
+    "answer_index": 1,
+    "explanation": "Ilion, pubis e isquion se describen como partes que convergen en el acetábulo (cotilo), donde encaja la cabeza del fémur."
+  },
+  {
+    "id": 35,
+    "tag": "pelvis",
+    "question": "¿Cuál es la referencia ósea anterior y palpable del ilíaco más destacada en el temario?",
+    "options": [
+      "EIAS",
+      "Espina ciática",
+      "Apex del sacro",
+      "Manubrio"
+    ],
+    "answer_index": 0,
+    "explanation": "La EIAS (espina ilíaca anterosuperior) es una prominencia anterior muy palpable, especialmente en personas delgadas."
+  },
+  {
+    "id": 36,
+    "tag": "pelvis",
+    "question": "¿Cuál es la referencia ósea posterior destacada en el temario para el ilíaco?",
+    "options": [
+      "EIPS",
+      "EIAS",
+      "Apéndice xifoides",
+      "Agujero transverso"
+    ],
+    "answer_index": 0,
+    "explanation": "La EIPS (espina ilíaca posterosuperior) es la prominencia posterior del ilíaco que se menciona como referencia."
+  },
+  {
+    "id": 37,
+    "tag": "pelvis",
+    "question": "La cresta ilíaca se describe como:",
+    "options": [
+      "El borde superior del ilion de extremo anterior a posterior",
+      "Una articulación entre pubis derecho e izquierdo",
+      "El canal por donde pasa la médula espinal",
+      "Una curvatura fisiológica"
+    ],
+    "answer_index": 0,
+    "explanation": "La cresta ilíaca es el borde superior del ilíaco (ilion), desde el extremo anterior al posterior."
+  },
+  {
+    "id": 38,
+    "tag": "pelvis",
+    "question": "La tuberosidad isquiática se localiza en:",
+    "options": [
+      "Ilion superior",
+      "Isquion (parte inferior/posterior)",
+      "Pubis anterior",
+      "Sacro base"
+    ],
+    "answer_index": 1,
+    "explanation": "La tuberosidad isquiática es una prominencia del isquion, en la zona más inferior y sobresaliente. Es una referencia topográfica importante."
+  },
+  {
+    "id": 39,
+    "tag": "pelvis",
+    "question": "La articulación anterior entre ambos huesos ilíacos se llama:",
+    "options": [
+      "Articulación sacroilíaca",
+      "Sínfisis púbica",
+      "Coxofemoral",
+      "Interapofisaria"
+    ],
+    "answer_index": 1,
+    "explanation": "La unión anterior de ambos ilíacos en la región del pubis es la sínfisis púbica. Se menciona por su relación con pubalgia."
+  },
+  {
+    "id": 40,
+    "tag": "pelvis",
+    "question": "¿Qué afirmación es más precisa sobre el sacro según el temario?",
+    "options": [
+      "Está formado por 5 vértebras sacras fusionadas",
+      "Está formado por 5 vértebras sacras móviles",
+      "No tiene forámenes",
+      "No se relaciona con nervios raquídeos"
+    ],
+    "answer_index": 0,
+    "explanation": "El sacro tiene 5 vértebras fusionadas y presenta forámenes por donde salen nervios raquídeos. Además, soporta el disco L5–S1 en su platillo."
+  },
+  {
+    "id": 41,
+    "tag": "pelvis",
+    "question": "El platillo sacro se relaciona directamente con:",
+    "options": [
+      "El manubrio",
+      "El disco L5–S1",
+      "La primera costilla",
+      "La clavícula"
+    ],
+    "answer_index": 1,
+    "explanation": "El platillo sacro es la superficie superior del sacro donde se apoya el último disco intervertebral (entre L5 y S1)."
+  },
+  {
+    "id": 42,
+    "tag": "pelvis",
+    "question": "La nutación del sacro se define como el desplazamiento de la base del sacro:",
+    "options": [
+      "Hacia delante y abajo",
+      "Hacia atrás y arriba",
+      "Hacia lateral",
+      "En rotación axial"
+    ],
+    "answer_index": 0,
+    "explanation": "Nutación: base del sacro anterioriza (va hacia delante y hacia abajo) respecto a los ilíacos. Es la definición clave."
+  },
+  {
+    "id": 43,
+    "tag": "pelvis",
+    "question": "La contranutación del sacro se define como el desplazamiento de la base del sacro:",
+    "options": [
+      "Hacia atrás y arriba",
+      "Hacia delante y abajo",
+      "En flexión lumbar",
+      "En extensión dorsal"
+    ],
+    "answer_index": 0,
+    "explanation": "Contranutación: la base del sacro se desplaza hacia atrás y hacia arriba. Es el movimiento opuesto a la nutación."
+  },
+  {
+    "id": 44,
+    "tag": "pelvis",
+    "question": "Según el vídeo, ¿qué movimiento del sacro se asocia a la inspiración?",
+    "options": [
+      "Nutación",
+      "Contranutación",
+      "Rotación",
+      "Lateroflexión"
+    ],
+    "answer_index": 1,
+    "explanation": "El profesor indica que durante la inspiración se produce contranutación (la base del sacro va hacia atrás). Al espirar, nutación."
+  },
+  {
+    "id": 45,
+    "tag": "pelvis",
+    "question": "¿Qué afirmación es más precisa sobre el coxis?",
+    "options": [
+      "Tiene 3–5 vértebras fusionadas y articula con el sacro",
+      "Tiene siempre 7 vértebras móviles",
+      "No pertenece al anillo pélvico",
+      "Es un disco intervertebral"
+    ],
+    "answer_index": 0,
+    "explanation": "El coxis suele tener 3–5 vértebras fusionadas, y existe una articulación sacrococcígea entre sacro y coxis."
+  },
+  {
+    "id": 46,
+    "tag": "parrilla_costal",
+    "question": "El esternón se divide en:",
+    "options": [
+      "Cuerpo, cabeza y cuello",
+      "Manubrio, cuerpo y apéndice xifoides",
+      "Ilion, pubis e isquion",
+      "Arco anterior y posterior"
+    ],
+    "answer_index": 1,
+    "explanation": "El esternón (hueso impar anterior) se divide en manubrio, cuerpo y apéndice xifoides, según el temario."
+  },
+  {
+    "id": 47,
+    "tag": "parrilla_costal",
+    "question": "¿Cuántas costillas hay en total?",
+    "options": [
+      "12",
+      "24",
+      "14",
+      "20"
+    ],
+    "answer_index": 1,
+    "explanation": "Hay 12 pares de costillas, es decir, 24 costillas en total. Se articulan con la columna dorsal."
+  },
+  {
+    "id": 48,
+    "tag": "parrilla_costal",
+    "question": "Una costilla se divide en (según el temario):",
+    "options": [
+      "Cabeza, cuello, tuberosidad y cuerpo",
+      "Manubrio, cuerpo y xifoides",
+      "Ilion, pubis e isquion",
+      "Pedículo, lámina y apófisis"
+    ],
+    "answer_index": 0,
+    "explanation": "La costilla se describe con cabeza, cuello, tuberosidad costal y cuerpo. Esto es lo que se pide memorizar."
+  },
+  {
+    "id": 49,
+    "tag": "parrilla_costal",
+    "question": "¿Cómo se clasifican las costillas por su relación con el esternón?",
+    "options": [
+      "Cervicales, dorsales y lumbares",
+      "Verdaderas, falsas y flotantes",
+      "Lordóticas y cifóticas",
+      "Anteriores y posteriores"
+    ],
+    "answer_index": 1,
+    "explanation": "Se clasifican en verdaderas (1–7), falsas (8–10) y flotantes (11–12) según su articulación con el esternón."
+  },
+  {
+    "id": 50,
+    "tag": "parrilla_costal",
+    "question": "¿Cuántos pares de costillas verdaderas hay?",
+    "options": [
+      "6",
+      "7",
+      "8",
+      "10"
+    ],
+    "answer_index": 1,
+    "explanation": "Las costillas verdaderas son los 7 primeros pares (1–7). Articulan directamente con el esternón mediante su cartílago."
+  },
+  {
+    "id": 51,
+    "tag": "parrilla_costal",
+    "question": "¿Cuántos pares de costillas falsas hay?",
+    "options": [
+      "1",
+      "2",
+      "3",
+      "4"
+    ],
+    "answer_index": 2,
+    "explanation": "Las costillas falsas son 3 pares (8ª, 9ª y 10ª). Articulan con el esternón a través de un cartílago común."
+  },
+  {
+    "id": 52,
+    "tag": "parrilla_costal",
+    "question": "¿Cuántos pares de costillas flotantes hay?",
+    "options": [
+      "1",
+      "2",
+      "3",
+      "5"
+    ],
+    "answer_index": 1,
+    "explanation": "Las costillas flotantes son 2 pares (11ª y 12ª). No articulan con el esternón."
+  },
+  {
+    "id": 53,
+    "tag": "parrilla_costal",
+    "question": "Las costillas verdaderas se diferencian porque:",
+    "options": [
+      "Articulan directamente con el esternón",
+      "No articulan con el esternón",
+      "Articulan con el esternón mediante cartílago común (único)",
+      "Solo articulan con la clavícula"
+    ],
+    "answer_index": 0,
+    "explanation": "Las verdaderas (1–7) tienen articulación directa con el esternón mediante su propio cartílago costal."
+  },
+  {
+    "id": 54,
+    "tag": "parrilla_costal",
+    "question": "Las costillas falsas se diferencian porque:",
+    "options": [
+      "No articulan con el esternón",
+      "Articulan directamente con el esternón",
+      "Articulan con el esternón a través de un cartílago común",
+      "Son 7 pares"
+    ],
+    "answer_index": 2,
+    "explanation": "Las falsas (8–10) se unen a un cartílago común que finalmente articula con el esternón."
+  },
+  {
+    "id": 55,
+    "tag": "parrilla_costal",
+    "question": "Las costillas flotantes se diferencian porque:",
+    "options": [
+      "Articulan directamente con el esternón",
+      "No articulan con el esternón",
+      "Articulan con cartílago común",
+      "No articulan con la columna dorsal"
+    ],
+    "answer_index": 1,
+    "explanation": "Las flotantes (11–12) no articulan con el esternón. Sí articulan con la columna dorsal correspondiente."
+  },
+  {
+    "id": 56,
+    "tag": "vertebra_anatomia",
+    "question": "El agujero transverso aparece en:",
+    "options": [
+      "Todas las vértebras lumbares",
+      "Las apófisis transversas de las vértebras cervicales",
+      "El cuerpo del esternón",
+      "El sacro únicamente"
+    ],
+    "answer_index": 1,
+    "explanation": "El foramen transverso es característico de las vértebras cervicales y está en sus apófisis transversas."
+  },
+  {
+    "id": 57,
+    "tag": "vertebra_anatomia",
+    "question": "¿Qué estructura discurre (de forma general en el temario) por el agujero transverso?",
+    "options": [
+      "Arteria vertebral",
+      "Arteria femoral",
+      "Nervio ciático",
+      "Vena cava inferior"
+    ],
+    "answer_index": 0,
+    "explanation": "Por el agujero transverso discurre la arteria vertebral. Es una referencia anatómica clave en cervicales."
+  },
+  {
+    "id": 58,
+    "tag": "vertebra_anatomia",
+    "question": "El atlas corresponde a:",
+    "options": [
+      "C1",
+      "C2",
+      "T1",
+      "L1"
+    ],
+    "answer_index": 0,
+    "explanation": "El atlas es la primera vértebra cervical (C1). Se considera especial por su morfología en anillo."
+  },
+  {
+    "id": 59,
+    "tag": "vertebra_anatomia",
+    "question": "Característica principal del atlas (C1) según el temario:",
+    "options": [
+      "No tiene cuerpo vertebral",
+      "Tiene apófisis odontoides",
+      "Tiene 12 costillas",
+      "Es una vértebra fusionada"
+    ],
+    "answer_index": 0,
+    "explanation": "El atlas no tiene cuerpo vertebral, por lo que forma un anillo óseo. La odontoides es característica del axis (C2)."
+  },
+  {
+    "id": 60,
+    "tag": "vertebra_anatomia",
+    "question": "El axis corresponde a:",
+    "options": [
+      "C1",
+      "C2",
+      "T12",
+      "S1"
+    ],
+    "answer_index": 1,
+    "explanation": "El axis es la segunda vértebra cervical (C2). Es especial por su apófisis odontoides."
+  },
+  {
+    "id": 61,
+    "tag": "vertebra_anatomia",
+    "question": "Característica principal del axis (C2) según el temario:",
+    "options": [
+      "No tiene cuerpo vertebral",
+      "Tiene apófisis odontoides (diente)",
+      "Forma la sínfisis púbica",
+      "Contiene el centro frénico"
+    ],
+    "answer_index": 1,
+    "explanation": "El axis presenta la apófisis odontoides, que actúa como pivote para la rotación del atlas y la cabeza."
+  },
+  {
+    "id": 62,
+    "tag": "vertebra_anatomia",
+    "question": "La apófisis odontoides sirve principalmente para:",
+    "options": [
+      "Anclar el diafragma",
+      "Actuar como pivote para la rotación atlas-axis",
+      "Formar los agujeros de conjunción lumbares",
+      "Unir costillas al esternón"
+    ],
+    "answer_index": 1,
+    "explanation": "El diente del axis encaja en el anillo del atlas y permite gran parte de la rotación cervical alta."
+  },
+  {
+    "id": 63,
+    "tag": "musculos_profundos_espalda",
+    "question": "En el temario, los músculos profundos de la espalda (páginas 73–81) se estudian principalmente:",
+    "options": [
+      "Con inserciones y acciones completas",
+      "Solo por su nombre y como 'profundos de la espalda'",
+      "Solo con su irrigación",
+      "Solo con sus inervaciones segmentarias"
+    ],
+    "answer_index": 1,
+    "explanation": "El profesor indica que en ese bloque basta aprender nombres y reconocerlos como musculatura profunda/paravertebral."
+  },
+  {
+    "id": 64,
+    "tag": "musculos_profundos_espalda",
+    "question": "¿Cuál de los siguientes se incluye en la lista de musculatura profunda de la espalda del temario?",
+    "options": [
+      "Dorsal largo",
+      "Diafragma",
+      "Recto anterior del abdomen",
+      "Escaleno anterior"
+    ],
+    "answer_index": 0,
+    "explanation": "Dorsal largo aparece en el bloque de músculos profundos/paravertebrales. Diafragma, recto anterior y escalenos se estudian en otros apartados."
+  },
+  {
+    "id": 65,
+    "tag": "musculos_profundos_espalda",
+    "question": "¿Cuál es el nombre del músculo que el profesor recalca que NO debe confundirse con el dorsal ancho?",
+    "options": [
+      "Dorsal largo",
+      "Oblicuo mayor",
+      "Intercostal externo",
+      "Transverso"
+    ],
+    "answer_index": 0,
+    "explanation": "Se menciona explícitamente 'dorsal largo (no ancho)'. El dorsal ancho es un músculo superficial diferente."
+  },
+  {
+    "id": 66,
+    "tag": "suboccipitales",
+    "question": "¿Qué conjunto se considera 'músculos suboccipitales' según el vídeo?",
+    "options": [
+      "Recto posterior menor/mayor y oblicuo menor/mayor",
+      "Transverso, oblicuo menor y mayor",
+      "Escaleno anterior/medio/posterior",
+      "Intercostales internos/externos"
+    ],
+    "answer_index": 0,
+    "explanation": "Los suboccipitales incluyen rectos posteriores (menor y mayor) y oblicuos (menor y mayor). Se relacionan con cefaleas tensionales."
+  },
+  {
+    "id": 67,
+    "tag": "suboccipitales",
+    "question": "Según el vídeo, los músculos suboccipitales se localizan principalmente entre:",
+    "options": [
+      "Sacro y coxis",
+      "Axis y occipital",
+      "L5 y S1",
+      "Esternón y costillas"
+    ],
+    "answer_index": 1,
+    "explanation": "El profesor indica que los suboccipitales se encuentran desde el axis hasta el occipital, en la región posterior alta del cuello."
+  },
+  {
+    "id": 68,
+    "tag": "musculos_espalda",
+    "question": "¿Cuáles son los tres escalenos que se estudian?",
+    "options": [
+      "Anterior, medio y posterior",
+      "Superior, medio e inferior",
+      "Mayor, menor y transverso",
+      "Cervical, dorsal y lumbar"
+    ],
+    "answer_index": 0,
+    "explanation": "Se presentan escaleno anterior, medio y posterior. Se estudian inserciones generales y acción principal (inclinación lateral)."
+  },
+  {
+    "id": 69,
+    "tag": "musculos_espalda",
+    "question": "Inserción general más precisa del escaleno anterior según el vídeo:",
+    "options": [
+      "C3–C6 a 1ª costilla",
+      "C2–C7 a 1ª costilla",
+      "C4–C6 a 2ª costilla",
+      "L1–L5 a cresta ilíaca"
+    ],
+    "answer_index": 0,
+    "explanation": "El escaleno anterior va de apófisis transversas C3 a C6 hacia la 1ª costilla. Es un detalle de memorización para el examen."
+  },
+  {
+    "id": 70,
+    "tag": "musculos_espalda",
+    "question": "Inserción general más precisa del escaleno medio según el vídeo:",
+    "options": [
+      "C2–C7 a 1ª costilla",
+      "C3–C6 a 1ª costilla",
+      "C4–C6 a 2ª costilla",
+      "C1–C2 al occipital"
+    ],
+    "answer_index": 0,
+    "explanation": "El escaleno medio va de apófisis transversas C2 a C7 hacia la 1ª costilla. Es el más extendido de los tres en el vídeo."
+  },
+  {
+    "id": 71,
+    "tag": "musculos_espalda",
+    "question": "Inserción general más precisa del escaleno posterior según el vídeo:",
+    "options": [
+      "C4–C6 a 2ª costilla",
+      "C2–C7 a 1ª costilla",
+      "C3–C6 a 1ª costilla",
+      "T1–T12 al esternón"
+    ],
+    "answer_index": 0,
+    "explanation": "El escaleno posterior va de C4 a C6 hacia la 2ª costilla. Se diferencia de anterior/medio por terminar en la segunda costilla."
+  },
+  {
+    "id": 72,
+    "tag": "musculos_espalda",
+    "question": "Acción principal conjunta de los escalenos en el temario:",
+    "options": [
+      "Inclinación lateral del cuello",
+      "Flexión del tronco",
+      "Extensión de rodilla",
+      "Rotación de cadera"
+    ],
+    "answer_index": 0,
+    "explanation": "En conjunto, los escalenos realizan principalmente inclinación lateral del cuello hacia el lado de contracción."
+  },
+  {
+    "id": 73,
+    "tag": "musculos_espalda",
+    "question": "En el temario, el 'ECOM' corresponde a:",
+    "options": [
+      "Esternocleidomastoideo",
+      "Elevador de la escápula",
+      "Extensor común de los dedos",
+      "Erector espinal mayor"
+    ],
+    "answer_index": 0,
+    "explanation": "ECOM es abreviatura frecuente de esternocleidomastoideo. El nombre ayuda a recordar inserciones (esternón, clavícula, occipital, mastoides)."
+  }
+]
