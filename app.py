@@ -24,12 +24,22 @@ def _try_login():
     """Attempt to log in the user silently. Sets session state if logged in."""
     if st.session_state.get("user_id"):
         return
-    if st.user.is_logged_in:
-        email = st.user.email
-        name = st.user.name or email
-        user_id = get_or_create_google_user(email, name)
-        st.session_state.user_id = user_id
-        st.session_state.username = name
+    
+    try:
+        if st.user.is_logged_in:
+            email = st.user.email
+            name = st.user.name or email
+            user_id = get_or_create_google_user(email, name)
+            st.session_state.user_id = user_id
+            st.session_state.username = name
+    except Exception as e:
+        # Use st.experimental_user (standard for Community Cloud auth)
+        if st.experimental_user.is_logged_in:
+            email = st.experimental_user.email
+            name = st.experimental_user.name or email
+            user_id = get_or_create_google_user(email, name)
+            st.session_state.user_id = user_id
+            st.session_state.username = name
 
 
 def _difficulty_score(q, question_stats):
