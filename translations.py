@@ -78,6 +78,22 @@ TRANSLATIONS = {
     "level_difficult": {"es": "Difícil (respuesta abierta)", "en": "Difficult (open answer)", "fr": "Difficile (réponse ouverte)", "ca": "Difícil (resposta oberta)"},
     "your_answer": {"es": "Tu respuesta:", "en": "Your answer:", "fr": "Votre réponse :", "ca": "La teva resposta:"},
     "submit_answer": {"es": "Enviar respuesta", "en": "Submit answer", "fr": "Envoyer la réponse", "ca": "Enviar resposta"},
+    "view": {"es": "Ver", "en": "View", "fr": "Voir", "ca": "Veure"},
+    "download": {"es": "Descargar", "en": "Download", "fr": "Télécharger", "ca": "Descarregar"},
+    "no_preview": {"es": "Vista previa no disponible.", "en": "Preview not available.", "fr": "Aperçu non disponible.", "ca": "Vista prèvia no disponible."},
+    "close": {"es": "Cerrar", "en": "Close", "fr": "Fermer", "ca": "Tancar"},
+    "study_watch": {"es": "Mira el vídeo. Una pregunta aparecerá tras 1 minuto.", "en": "Watch the video. A question will appear after 1 minute.", "fr": "Regardez la vidéo. Une question apparaîtra après 1 minute.", "ca": "Mira el vídeo. Una pregunta apareixerà després d'1 minut."},
+    "study_ready": {"es": "Estoy listo para una pregunta", "en": "I'm ready for a question", "fr": "Je suis prêt pour une question", "ca": "Estic llest per a una pregunta"},
+    "study_continue": {"es": "Continuar vídeo", "en": "Continue video", "fr": "Continuer la vidéo", "ca": "Continuar vídeo"},
+    "pause_times_label": {"es": "Tiempos de pausa (ej. 1:30(2), 3:00)", "en": "Pause times (e.g. 1:30(2), 3:00)", "fr": "Temps de pause (ex. 1:30(2), 3:00)", "ca": "Temps de pausa (ex. 1:30(2), 3:00)"},
+    "pause_times_help": {"es": "Tiempos separados por comas. (N) = preguntas en esa pausa. Vacío = cada 60 segundos.", "en": "Comma-separated timestamps. (N) = questions at that pause. Empty = every 60 seconds.", "fr": "Horodatages séparés par des virgules. (N) = questions à cette pause. Vide = toutes les 60 secondes.", "ca": "Temps separats per comes. (N) = preguntes en esa pausa. Buit = cada 60 segons."},
+    "export_json": {"es": "⬇️ Exportar JSON", "en": "⬇️ Export JSON", "fr": "⬇️ Exporter JSON", "ca": "⬇️ Exportar JSON"},
+    "save_material": {"es": "Guardar", "en": "Save", "fr": "Enregistrer", "ca": "Desar"},
+    "material_references": {"es": "Referencias a materiales", "en": "Material references", "fr": "Références aux matériaux", "ca": "Referències a materials"},
+    "video_at": {"es": "en {times}", "en": "at {times}", "fr": "à {times}", "ca": "a {times}"},
+    "page_num": {"es": "p. {pages}", "en": "p. {pages}", "fr": "p. {pages}", "ca": "p. {pages}"},
+    "timestamps_hint": {"es": "Tiempos (ej. 1:00-2:00, 3:30)", "en": "Timestamps (e.g. 1:00-2:00, 3:30)", "fr": "Horodatages (ex. 1:00-2:00, 3:30)", "ca": "Temps (ex. 1:00-2:00, 3:30)"},
+    "pages_hint": {"es": "Páginas (ej. 3, 7)", "en": "Pages (e.g. 3, 7)", "fr": "Pages (ex. 3, 7)", "ca": "Pàgines (ex. 3, 7)"},
 
     # Dashboard
     "results_history": {"es": "Historial de resultados", "en": "Results history", "fr": "Historique des résultats", "ca": "Historial de resultats"},
@@ -191,6 +207,51 @@ TRANSLATIONS = {
     "lang_it": {"es": "Italiano", "en": "Italian", "fr": "Italien", "ca": "Italià"},
     "lang_ca": {"es": "Catalán", "en": "Catalan", "fr": "Catalan", "ca": "Català"},
     "lang_other": {"es": "Otro", "en": "Other", "fr": "Autre", "ca": "Altre"},
+
+    # Collaborators
+    "collaborators": {"es": "Colaboradores", "en": "Collaborators", "fr": "Collaborateurs", "ca": "Col·laboradors"},
+    "invite_user": {"es": "Invitar usuario", "en": "Invite user", "fr": "Inviter un utilisateur", "ca": "Convidar usuari"},
+    "role_guest": {"es": "Invitado (solo ver y hacer test)", "en": "Guest (view and take test only)", "fr": "Invité (voir et passer le test uniquement)", "ca": "Convidat (només veure i fer test)"},
+    "role_reviewer": {"es": "Revisor (editar preguntas)", "en": "Reviewer (edit questions)", "fr": "Réviseur (modifier les questions)", "ca": "Revisor (editar preguntes)"},
+    "role_admin": {"es": "Administrador (gestionar colaboradores)", "en": "Admin (manage collaborators)", "fr": "Administrateur (gérer les collaborateurs)", "ca": "Administrador (gestionar col·laboradors)"},
+    "email_placeholder": {"es": "Email del usuario", "en": "User email", "fr": "Email de l'utilisateur", "ca": "Email de l'usuari"},
+    "collaborator_added": {"es": "Colaborador añadido.", "en": "Collaborator added.", "fr": "Collaborateur ajouté.", "ca": "Col·laborador afegit."},
+    "collaborator_removed": {"es": "Colaborador eliminado.", "en": "Collaborator removed.", "fr": "Collaborateur supprimé.", "ca": "Col·laborador eliminat."},
+    "collaborator_updated": {"es": "Rol actualizado.", "en": "Role updated.", "fr": "Rôle mis à jour.", "ca": "Rol actualitzat."},
+    "shared_with_me": {"es": "Compartidos conmigo", "en": "Shared with me", "fr": "Partagés avec moi", "ca": "Compartits amb mi"},
+    "no_permission": {"es": "No tienes permiso para editar este test.", "en": "You don't have permission to edit this test.", "fr": "Vous n'avez pas la permission de modifier ce test.", "ca": "No tens permís per editar aquest test."},
+    "role_label": {"es": "Rol", "en": "Role", "fr": "Rôle", "ca": "Rol"},
+    "invite_btn": {"es": "Invitar", "en": "Invite", "fr": "Inviter", "ca": "Convidar"},
+    "cannot_invite_self": {"es": "No puedes invitarte a ti mismo.", "en": "You cannot invite yourself.", "fr": "Vous ne pouvez pas vous inviter vous-même.", "ca": "No pots convidar-te a tu mateix."},
+    "email_required": {"es": "El email es obligatorio.", "en": "Email is required.", "fr": "L'email est obligatoire.", "ca": "L'email és obligatori."},
+    "owner": {"es": "Propietario", "en": "Owner", "fr": "Propriétaire", "ca": "Propietari"},
+    "role_student": {"es": "Estudiante (solo hacer test)", "en": "Student (take test only)", "fr": "Étudiant (passer le test uniquement)", "ca": "Estudiant (només fer test)"},
+
+    # Visibility
+    "visibility": {"es": "Visibilidad", "en": "Visibility", "fr": "Visibilité", "ca": "Visibilitat"},
+    "visibility_public": {"es": "Público (todos pueden ver y hacer el test)", "en": "Public (everyone can see and take the test)", "fr": "Public (tout le monde peut voir et passer le test)", "ca": "Públic (tothom pot veure i fer el test)"},
+    "visibility_private": {"es": "Privado (todos ven que existe, solo con acceso pueden hacerlo)", "en": "Private (everyone can see it exists, only with access can take it)", "fr": "Privé (tout le monde voit qu'il existe, seuls ceux avec accès peuvent le passer)", "ca": "Privat (tothom veu que existeix, només amb accés poden fer-lo)"},
+    "visibility_hidden": {"es": "Oculto (solo usuarios con acceso pueden verlo)", "en": "Hidden (only users with access can see it)", "fr": "Caché (seuls les utilisateurs avec accès peuvent le voir)", "ca": "Ocult (només usuaris amb accés poden veure'l)"},
+    "test_private_no_access": {"es": "Este test es privado. Necesitas acceso para realizarlo.", "en": "This test is private. You need access to take it.", "fr": "Ce test est privé. Vous avez besoin d'un accès pour le passer.", "ca": "Aquest test és privat. Necessites accés per fer-lo."},
+    "program_private_no_access": {"es": "Este programa es privado. Necesitas acceso para realizarlo.", "en": "This program is private. You need access to use it.", "fr": "Ce programme est privé. Vous avez besoin d'un accès.", "ca": "Aquest programa és privat. Necessites accés per fer-lo."},
+    "shared_programs": {"es": "Programas compartidos conmigo", "en": "Programs shared with me", "fr": "Programmes partagés avec moi", "ca": "Programes compartits amb mi"},
+    "all_programs": {"es": "Todos los programas", "en": "All programs", "fr": "Tous les programmes", "ca": "Tots els programes"},
+    "my_programs": {"es": "Mis programas", "en": "My programs", "fr": "Mes programmes", "ca": "Els meus programes"},
+
+    # Transcript
+    "transcript": {"es": "Transcripción", "en": "Transcript", "fr": "Transcription", "ca": "Transcripció"},
+    "no_transcript": {"es": "No hay transcripción disponible.", "en": "No transcript available.", "fr": "Aucune transcription disponible.", "ca": "No hi ha transcripció disponible."},
+    "fetching_transcript": {"es": "Obteniendo transcripción...", "en": "Fetching transcript...", "fr": "Récupération de la transcription...", "ca": "Obtenint transcripció..."},
+    "transcript_error": {"es": "Error al obtener la transcripción.", "en": "Error fetching transcript.", "fr": "Erreur lors de la récupération de la transcription.", "ca": "Error en obtenir la transcripció."},
+
+    # Generate topics
+    "generate_topics_btn": {"es": "Temas", "en": "Topics", "fr": "Thèmes", "ca": "Temes"},
+    "generate_topics_title": {"es": "Generar temas", "en": "Generate topics", "fr": "Générer des thèmes", "ca": "Generar temes"},
+    "generating_topics": {"es": "Generando temas con IA...", "en": "Generating topics with AI...", "fr": "Génération de thèmes avec l'IA...", "ca": "Generant temes amb IA..."},
+    "generated_topics_instructions": {"es": "Edita los temas sugeridos (uno por línea). Los duplicados con temas existentes se ignorarán.", "en": "Edit the suggested topics (one per line). Duplicates with existing topics will be ignored.", "fr": "Modifiez les thèmes suggérés (un par ligne). Les doublons avec les thèmes existants seront ignorés.", "ca": "Edita els temes suggerits (un per línia). Els duplicats amb temes existents s'ignoraran."},
+    "duplicate_topics_warning": {"es": "Estos temas ya existen y se ignorarán: {topics}", "en": "These topics already exist and will be skipped: {topics}", "fr": "Ces thèmes existent déjà et seront ignorés : {topics}", "ca": "Aquests temes ja existeixen i s'ignoraran: {topics}"},
+    "confirm": {"es": "Confirmar", "en": "Confirm", "fr": "Confirmer", "ca": "Confirmar"},
+    "topics_added": {"es": "{n} temas añadidos.", "en": "{n} topics added.", "fr": "{n} thèmes ajoutés.", "ca": "{n} temes afegits."},
 }
 
 
