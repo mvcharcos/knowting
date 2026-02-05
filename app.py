@@ -7,11 +7,12 @@ from db import (
     create_session, update_session_score, get_user_sessions,
     get_session_wrong_answers,
     get_user_profile, update_user_profile,
+    get_user_global_role, set_user_global_role, set_user_global_role_by_email, get_all_users_with_roles,
     toggle_favorite, get_favorite_tests,
     get_all_tests, get_test, get_test_questions, get_test_questions_by_ids,
-    get_test_tags, rename_test_tag, delete_test_tag, create_test, update_test, delete_test,
+    get_test_tags, add_test_tag, rename_test_tag, delete_test_tag, create_test, update_test, delete_test, import_test_from_json,
     add_question, update_question, delete_question, get_next_question_num,
-    get_test_materials, add_test_material, update_test_material, delete_test_material, update_material_transcript,
+    get_test_materials, get_material_by_id, add_test_material, update_test_material, delete_test_material, update_material_transcript, update_material_pause_times,
     get_question_material_links, get_question_material_links_bulk, set_question_material_links,
     create_program, update_program, delete_program, get_program,
     get_all_programs, add_test_to_program, remove_test_from_program,
@@ -24,6 +25,10 @@ from db import (
 )
 
 init_db()
+
+# Set initial admin users
+set_user_global_role_by_email("mcharcos@socib.es", "admin")
+set_user_global_role_by_email("mvcharcos@gmail.com", "admin")
 
 
 def _is_logged_in():
@@ -170,33 +175,535 @@ def _show_transcript_dialog(transcript_text):
     st.text_area(t("transcript"), value=transcript_text, height=400, disabled=True)
 
 
+def _extract_youtube_id(url):
+    """Extract YouTube video ID from various URL formats."""
+    import re
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        r'(?:youtube\.com/v/)([a-zA-Z0-9_-]{11})',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _seconds_to_mmss(seconds):
+    """Convert seconds to mm:ss format."""
+    m, s = divmod(int(seconds), 60)
+    return f"{m}:{s:02d}"
+
+
+def _mmss_to_seconds(mmss):
+    """Convert mm:ss or m:ss format to seconds."""
+    import re
+    match = re.match(r'^(\d+):(\d{1,2})$', mmss.strip())
+    if match:
+        m, s = int(match.group(1)), int(match.group(2))
+        return m * 60 + s
+    return None
+
+
+@st.dialog(t("pause_time_selector_title"), width="large")
+def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_times):
+    import json as _json
+
+    # Use material-specific session state key to avoid conflicts
+    state_key = f"editing_pause_times_{material_id}"
+
+    # Always re-initialize from database when dialog opens with fresh data
+    if state_key not in st.session_state or st.session_state.get("_pause_dialog_mat_id") != material_id:
+        # Parse existing pause times from database
+        pause_list = []
+        if current_pause_times:
+            try:
+                parsed = _json.loads(current_pause_times)
+                for item in parsed:
+                    pause_list.append({"t": item["t"], "n": item.get("n", 1)})
+            except:
+                pass
+        st.session_state[state_key] = pause_list
+        st.session_state["_pause_dialog_mat_id"] = material_id
+
+    pause_times = st.session_state[state_key]
+
+    # Embed YouTube video with time capture capability
+    video_id = _extract_youtube_id(youtube_url)
+    if video_id:
+        # Custom HTML with YouTube IFrame API for time capture
+        video_html = f'''
+        <style>
+            #player-container {{ width: 100%; }}
+            #capture-btn {{
+                background-color: #ff4b4b;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                font-size: 16px;
+                border-radius: 8px;
+                cursor: pointer;
+                margin-top: 10px;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                transition: all 0.2s;
+            }}
+            #capture-btn:hover {{
+                background-color: #ff3333;
+                transform: scale(1.02);
+            }}
+            #time-display {{
+                display: inline-block;
+                font-size: 24px;
+                font-weight: bold;
+                color: #333;
+                font-family: monospace;
+                background: #f0f2f6;
+                padding: 10px 20px;
+                border-radius: 8px;
+                min-width: 80px;
+                text-align: center;
+            }}
+            #capture-controls {{
+                margin-top: 12px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }}
+            #questions-input {{
+                width: 60px;
+                padding: 8px 12px;
+                font-size: 16px;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                text-align: center;
+            }}
+            #questions-label {{
+                color: #666;
+                font-size: 14px;
+            }}
+            #adding-feedback {{
+                background: #d4edda;
+                border: 2px solid #28a745;
+                color: #155724;
+                padding: 8px 16px;
+                border-radius: 8px;
+                font-size: 16px;
+                display: none;
+                margin-top: 10px;
+                text-align: center;
+            }}
+            #captured-time-display {{
+                font-size: 28px;
+                font-weight: bold;
+                font-family: monospace;
+            }}
+        </style>
+        <div id="player-container">
+            <div id="player"></div>
+            <div id="capture-controls">
+                <button id="capture-btn" onclick="captureTime()">⏱️ {t("mark_pause_time")}</button>
+                <span id="time-display">0:00</span>
+                <span id="questions-label">{t("questions_at_pause")}</span>
+                <input type="number" id="questions-input" value="1" min="1" max="10">
+            </div>
+            <div id="adding-feedback">
+                ✓ <span id="captured-time-display"></span> {t("copied")}! → {t("paste_below")}
+            </div>
+        </div>
+        <script>
+            var player;
+            var timeUpdateInterval;
+            var materialId = {material_id};
+
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+            function onYouTubeIframeAPIReady() {{
+                player = new YT.Player('player', {{
+                    height: '315',
+                    width: '100%',
+                    videoId: '{video_id}',
+                    playerVars: {{ 'playsinline': 1, 'rel': 0 }},
+                    events: {{ 'onReady': onPlayerReady }}
+                }});
+            }}
+
+            function onPlayerReady(event) {{
+                updateTimeDisplay();
+                timeUpdateInterval = setInterval(updateTimeDisplay, 500);
+            }}
+
+            function formatTime(seconds) {{
+                var mins = Math.floor(seconds / 60);
+                var secs = seconds % 60;
+                return mins + ":" + (secs < 10 ? "0" : "") + secs;
+            }}
+
+            function updateTimeDisplay() {{
+                if (player && player.getCurrentTime) {{
+                    var seconds = Math.floor(player.getCurrentTime());
+                    document.getElementById('time-display').textContent = formatTime(seconds);
+                }}
+            }}
+
+            function captureTime() {{
+                if (player && player.getCurrentTime) {{
+                    var seconds = Math.floor(player.getCurrentTime());
+                    var numQuestions = parseInt(document.getElementById('questions-input').value) || 1;
+                    player.pauseVideo();
+
+                    var timeStr = formatTime(seconds);
+
+                    // Copy to clipboard
+                    navigator.clipboard.writeText(timeStr).then(function() {{
+                        // Show feedback with captured time
+                        document.getElementById('captured-time-display').textContent = timeStr;
+                        document.getElementById('adding-feedback').style.display = 'block';
+                    }}).catch(function() {{
+                        // Clipboard failed, still show the time
+                        document.getElementById('captured-time-display').textContent = timeStr;
+                        document.getElementById('adding-feedback').style.display = 'block';
+                    }});
+                }}
+            }}
+        </script>
+        '''
+        st.components.v1.html(video_html, height=460)
+    else:
+        st.warning(t("no_transcript"))
+
+    # Manual time entry - shown prominently for paste workflow
+    col_time, col_questions, col_add = st.columns([3, 2, 2])
+    with col_time:
+        new_time = st.text_input(t("time_mmss"), placeholder="0:00", key="new_pause_time_input")
+    with col_questions:
+        new_q_count = st.number_input(t("num_questions"), min_value=1, max_value=10, value=1, key="new_pause_q_count")
+    with col_add:
+        st.write("")  # Spacing to align button
+        if st.button(f"➕ {t('add_time')}", key="add_pause_time_btn", type="primary", use_container_width=True):
+            seconds = _mmss_to_seconds(new_time)
+            if seconds is not None:
+                existing_times = [p["t"] for p in pause_times]
+                if seconds not in existing_times:
+                    pause_times.append({"t": seconds, "n": new_q_count})
+                    pause_times.sort(key=lambda x: x["t"])
+                    st.session_state[state_key] = pause_times
+                    st.rerun(scope="fragment")  # Keep dialog open
+            else:
+                st.warning(t("invalid_time_format") if "invalid_time_format" in dir() else "Invalid time format")
+
+    st.divider()
+
+    # Display marked pause times
+    st.subheader(t("marked_pause_times"))
+    if not pause_times:
+        st.info(t("no_pause_times"))
+    else:
+        for i, pt in enumerate(pause_times):
+            col_display, col_q, col_del = st.columns([2, 2, 1])
+            with col_display:
+                st.write(f"⏱️ **{_seconds_to_mmss(pt['t'])}**")
+            with col_q:
+                new_n = st.number_input(
+                    t("questions_at_pause"),
+                    min_value=1, max_value=10, value=pt["n"],
+                    key=f"pause_q_{material_id}_{i}",
+                    label_visibility="collapsed"
+                )
+                if new_n != pt["n"]:
+                    pause_times[i]["n"] = new_n
+                    st.session_state[state_key] = pause_times
+            with col_del:
+                if st.button("🗑️", key=f"del_pause_{material_id}_{i}"):
+                    pause_times.pop(i)
+                    st.session_state[state_key] = pause_times
+                    st.rerun(scope="fragment")  # Keep dialog open
+
+    st.divider()
+
+    # Save and cancel buttons
+    col_save, col_cancel = st.columns(2)
+    with col_save:
+        if st.button(t("save_pause_times"), type="primary", key="save_pause_times_btn"):
+            # Convert to JSON format
+            pause_json = _json.dumps(pause_times) if pause_times else ""
+            update_material_pause_times(material_id, pause_json)
+            # Update the text input widget state so it reflects new value
+            widget_key = f"edit_mat_pause_{material_id}"
+            st.session_state[widget_key] = _format_pause_times(pause_json)
+            if state_key in st.session_state:
+                del st.session_state[state_key]
+            if "_pause_dialog_mat_id" in st.session_state:
+                del st.session_state["_pause_dialog_mat_id"]
+            st.success(t("pause_times_saved"))
+            st.rerun()
+    with col_cancel:
+        if st.button(t("cancel"), key="cancel_pause_times_btn"):
+            if state_key in st.session_state:
+                del st.session_state[state_key]
+            if "_pause_dialog_mat_id" in st.session_state:
+                del st.session_state["_pause_dialog_mat_id"]
+            st.rerun()
+
+
+@st.dialog(t("pause_time_selector_title"), width="large")
+def _show_new_material_pause_time_dialog(youtube_url):
+    """Dialog to set pause times for a new material before it's created."""
+    import json as _json
+
+    # Initialize session state for pause times
+    if "new_material_editing_pause_times" not in st.session_state:
+        st.session_state.new_material_editing_pause_times = []
+
+    pause_times = st.session_state.new_material_editing_pause_times
+
+    # Embed YouTube video with time capture capability
+    video_id = _extract_youtube_id(youtube_url)
+    if video_id:
+        video_html = f'''
+        <style>
+            #player-container {{ width: 100%; }}
+            #capture-btn {{
+                background-color: #ff4b4b;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                font-size: 16px;
+                border-radius: 8px;
+                cursor: pointer;
+                margin-top: 10px;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                transition: all 0.2s;
+            }}
+            #capture-btn:hover {{
+                background-color: #ff3333;
+                transform: scale(1.02);
+            }}
+            #time-display {{
+                display: inline-block;
+                font-size: 24px;
+                font-weight: bold;
+                color: #333;
+                font-family: monospace;
+                background: #f0f2f6;
+                padding: 10px 20px;
+                border-radius: 8px;
+                min-width: 80px;
+                text-align: center;
+            }}
+            #capture-controls {{
+                margin-top: 12px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }}
+            #captured-box {{
+                background: #d4edda;
+                border: 2px solid #28a745;
+                border-radius: 12px;
+                padding: 15px 20px;
+                margin-top: 15px;
+                display: none;
+                text-align: center;
+            }}
+            #captured-time {{
+                font-size: 32px;
+                font-weight: bold;
+                color: #155724;
+                font-family: monospace;
+                display: block;
+                margin: 5px 0;
+            }}
+            #captured-label {{
+                color: #155724;
+                font-size: 14px;
+            }}
+            #captured-hint {{
+                color: #666;
+                font-size: 13px;
+                margin-top: 8px;
+            }}
+        </style>
+        <div id="player-container">
+            <div id="player"></div>
+            <div id="capture-controls">
+                <button id="capture-btn" onclick="captureTime()">⏱️ {t("mark_pause_time")}</button>
+                <span id="time-display">0:00</span>
+            </div>
+            <div id="captured-box">
+                <span id="captured-label">✓ {t("captured_time")}</span>
+                <span id="captured-time">--:--</span>
+                <span id="captured-hint">{t("copy_time_hint")}</span>
+            </div>
+        </div>
+        <script>
+            var player;
+            var timeUpdateInterval;
+
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+            function onYouTubeIframeAPIReady() {{
+                player = new YT.Player('player', {{
+                    height: '315',
+                    width: '100%',
+                    videoId: '{video_id}',
+                    playerVars: {{ 'playsinline': 1, 'rel': 0 }},
+                    events: {{ 'onReady': onPlayerReady }}
+                }});
+            }}
+
+            function onPlayerReady(event) {{
+                updateTimeDisplay();
+                timeUpdateInterval = setInterval(updateTimeDisplay, 500);
+            }}
+
+            function formatTime(seconds) {{
+                var mins = Math.floor(seconds / 60);
+                var secs = seconds % 60;
+                return mins + ":" + (secs < 10 ? "0" : "") + secs;
+            }}
+
+            function updateTimeDisplay() {{
+                if (player && player.getCurrentTime) {{
+                    var seconds = Math.floor(player.getCurrentTime());
+                    document.getElementById('time-display').textContent = formatTime(seconds);
+                }}
+            }}
+
+            function captureTime() {{
+                if (player && player.getCurrentTime) {{
+                    var seconds = Math.floor(player.getCurrentTime());
+                    var timeStr = formatTime(seconds);
+                    player.pauseVideo();
+
+                    // Show captured time prominently
+                    document.getElementById('captured-time').textContent = timeStr;
+                    document.getElementById('captured-box').style.display = 'block';
+
+                    // Copy to clipboard
+                    navigator.clipboard.writeText(timeStr).catch(function() {{}});
+                }}
+            }}
+        </script>
+        '''
+        st.components.v1.html(video_html, height=480)
+    else:
+        st.warning(t("no_transcript"))
+
+    st.divider()
+
+    # Time entry - paste from video or type manually
+    st.markdown(f"**{t('enter_time_manually')}**")
+    col_time, col_questions, col_add = st.columns([2, 2, 1])
+    with col_time:
+        new_time = st.text_input("", placeholder="0:00", key="new_mat_pause_time_input", label_visibility="collapsed")
+    with col_questions:
+        new_q_count = st.number_input(t("questions_at_pause"), min_value=1, max_value=10, value=1, key="new_mat_pause_q_count")
+    with col_add:
+        if st.button(t("add_time"), key="new_mat_add_pause_time_btn", type="primary"):
+            seconds = _mmss_to_seconds(new_time)
+            if seconds is not None:
+                existing_times = [p["t"] for p in pause_times]
+                if seconds not in existing_times:
+                    pause_times.append({"t": seconds, "n": new_q_count})
+                    pause_times.sort(key=lambda x: x["t"])
+                    st.session_state.new_material_editing_pause_times = pause_times
+                    st.rerun()
+
+    st.divider()
+
+    # Display marked pause times
+    st.subheader(t("marked_pause_times"))
+    if not pause_times:
+        st.info(t("no_pause_times"))
+    else:
+        for i, pt in enumerate(pause_times):
+            col_display, col_q, col_del = st.columns([2, 2, 1])
+            with col_display:
+                st.write(f"⏱️ **{_seconds_to_mmss(pt['t'])}**")
+            with col_q:
+                new_n = st.number_input(
+                    t("questions_at_pause"),
+                    min_value=1, max_value=10, value=pt["n"],
+                    key=f"new_mat_pause_q_{i}",
+                    label_visibility="collapsed"
+                )
+                if new_n != pt["n"]:
+                    pause_times[i]["n"] = new_n
+                    st.session_state.new_material_editing_pause_times = pause_times
+            with col_del:
+                if st.button("🗑️", key=f"new_mat_del_pause_{i}"):
+                    pause_times.pop(i)
+                    st.session_state.new_material_editing_pause_times = pause_times
+                    st.rerun()
+
+    st.divider()
+
+    # Save and cancel buttons
+    col_save, col_cancel = st.columns(2)
+    with col_save:
+        if st.button(t("save_pause_times"), type="primary", key="new_mat_save_pause_times_btn"):
+            # Store in session state for the material creation
+            st.session_state.new_material_pause_times = pause_times.copy()
+            del st.session_state["new_material_editing_pause_times"]
+            st.rerun()
+    with col_cancel:
+        if st.button(t("cancel"), key="new_mat_cancel_pause_times_btn"):
+            del st.session_state["new_material_editing_pause_times"]
+            st.rerun()
+
+
 def _generate_topics_from_transcript(transcript_text, existing_tags=None):
-    """Use Google Gemini to generate topic suggestions from a transcript."""
+    """Use Hugging Face to generate topic suggestions from a transcript."""
     import os
     try:
-        import google.generativeai as genai
+        from huggingface_hub import InferenceClient
     except ImportError:
+        st.error(t("hf_not_installed"))
         return []
-    api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
+    api_key = os.environ.get("HF_API_KEY") or (st.secrets["HF_API_KEY"] if "HF_API_KEY" in st.secrets else "")
     if not api_key:
+        st.error(t("hf_api_key_required"))
         return []
-    genai.configure(api_key=api_key)
+    model_id = os.environ.get("HF_MODEL") or (st.secrets["HF_MODEL"] if "HF_MODEL" in st.secrets else "Qwen/Qwen2.5-72B-Instruct")
     lang = st.session_state.get("lang", "es")
     lang_names = {"es": "Spanish", "en": "English", "fr": "French", "ca": "Catalan"}
     lang_name = lang_names.get(lang, "Spanish")
     existing_str = ", ".join(existing_tags) if existing_tags else "none"
-    prompt = (
-        f"Analyze this video transcript and extract the main topics/themes covered. "
+    system_prompt = (
+        f"You are an educational content analyzer. Extract main topics from video transcripts. "
         f"Return ONLY a list of short topic names (2-4 words each), one per line, no numbering, no bullets. "
-        f"Topics should be in {lang_name}. "
+        f"Topics should be in {lang_name}."
+    )
+    user_prompt = (
         f"Existing topics already in the test: {existing_str}. "
         f"Do not repeat existing topics. Suggest 5-15 new topics.\n\n"
-        f"Transcript:\n{transcript_text[:8000]}"
+        f"Transcript:\n{transcript_text[:6000]}"
     )
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(prompt)
-        lines = [line.strip() for line in response.text.strip().split("\n") if line.strip()]
+        client = InferenceClient(token=api_key)
+        response = client.chat_completion(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=500,
+            temperature=0.7,
+        )
+        text = response.choices[0].message.content
+        lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
         return lines
     except Exception as e:
         st.error(f"{t('transcript_error')} {e}")
@@ -232,13 +739,7 @@ def _show_generate_topics_dialog(test_id, transcript_text, existing_tags):
             added = 0
             for topic_name in new_topics:
                 if topic_name.strip().lower() not in existing_set:
-                    next_num = get_next_question_num(test_id)
-                    add_question(
-                        test_id, next_num, topic_name.strip(),
-                        t("new_question_text"),
-                        [t("option_a"), t("option_b"), t("option_c"), t("option_d")],
-                        0, "",
-                    )
+                    add_test_tag(test_id, topic_name.strip())
                     existing_set.add(topic_name.strip().lower())
                     added += 1
             del st.session_state["generated_topics"]
@@ -247,6 +748,181 @@ def _show_generate_topics_dialog(test_id, transcript_text, existing_tags):
     with col_cancel:
         if st.button(t("cancel"), key="cancel_gen_topics"):
             del st.session_state["generated_topics"]
+            st.rerun()
+
+
+def _generate_questions_from_transcript(transcript_text, num_questions=5):
+    """Use Hugging Face to generate quiz questions from a transcript."""
+    import os
+    import json as _json
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError:
+        st.error(t("hf_not_installed"))
+        return []
+    api_key = os.environ.get("HF_API_KEY") or (st.secrets["HF_API_KEY"] if "HF_API_KEY" in st.secrets else "")
+    if not api_key:
+        st.error(t("hf_api_key_required"))
+        return []
+    model_id = os.environ.get("HF_MODEL") or (st.secrets["HF_MODEL"] if "HF_MODEL" in st.secrets else "Qwen/Qwen2.5-72B-Instruct")
+    lang = st.session_state.get("lang", "es")
+    lang_names = {"es": "Spanish", "en": "English", "fr": "French", "ca": "Catalan"}
+    lang_name = lang_names.get(lang, "Spanish")
+    system_prompt = (
+        f"You are a quiz question generator for educational content. "
+        f"Generate multiple choice questions based on video transcripts with timestamps. "
+        f"Each question must have exactly 4 options (A, B, C, D) with only one correct answer. "
+        f"For each question, identify the time range in the video where the relevant content appears. "
+        f"Questions and options should be in {lang_name}. "
+        f"Return ONLY valid JSON array, no other text."
+    )
+
+    client = InferenceClient(token=api_key)
+    all_questions = []
+    # Generate in batches of up to 20 questions to stay within token limits
+    batch_size = 20
+    remaining = num_questions
+    transcript_chunk = transcript_text[:12000]
+
+    while remaining > 0:
+        batch_count = min(remaining, batch_size)
+        # Scale max_tokens: ~300 tokens per question
+        max_tokens = min(batch_count * 300, 8000)
+
+        already_generated = ""
+        if all_questions:
+            existing_q = [q.get("question", "")[:60] for q in all_questions[-10:]]
+            already_generated = f"\nDo NOT repeat these existing questions: {'; '.join(existing_q)}\n"
+
+        user_prompt = (
+            f"Generate exactly {batch_count} multiple choice questions from this transcript. "
+            f"The transcript has timestamps in format [m:ss]. For each question, include the time range "
+            f"(time_start and time_end) where the relevant content appears in the video.\n"
+            f"{already_generated}"
+            f"Return as JSON array with this exact format:\n"
+            f'[{{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "correct": 0, '
+            f'"explanation": "...", "time_start": "0:00", "time_end": "1:30"}}]\n'
+            f"where 'correct' is the index (0-3) of the correct option, and times are in m:ss format.\n\n"
+            f"Transcript:\n{transcript_chunk}"
+        )
+        try:
+            response = client.chat_completion(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=max_tokens,
+                temperature=0.7,
+            )
+            text = response.choices[0].message.content.strip()
+            # Try to extract JSON from response
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            batch_questions = _json.loads(text)
+            if isinstance(batch_questions, list):
+                all_questions.extend(batch_questions)
+        except Exception as e:
+            st.error(f"{t('transcript_error')} {e}")
+            break
+
+        remaining -= batch_count
+
+    return all_questions
+
+
+@st.dialog(t("generate_questions_title"), width="large")
+def _show_generate_questions_dialog(test_id, material_id, transcript_text):
+    # Step 1: Ask how many questions to generate
+    if "generated_questions" not in st.session_state:
+        st.write(t("how_many_questions"))
+        num_questions = st.slider("", min_value=1, max_value=500, value=5, key="gen_q_count")
+
+        col_gen, col_cancel = st.columns(2)
+        with col_gen:
+            if st.button(t("generate_btn"), type="primary", key="start_gen_questions"):
+                with st.spinner(t("generating_questions")):
+                    questions = _generate_questions_from_transcript(transcript_text, num_questions=num_questions)
+                st.session_state.generated_questions = questions
+                st.rerun(scope="fragment")
+        with col_cancel:
+            if st.button(t("cancel"), key="cancel_gen_questions_step1"):
+                st.rerun()
+        return
+
+    # Step 2: Show generated questions
+    questions = st.session_state.generated_questions
+    if not questions:
+        st.warning(t("no_questions_generated"))
+        if st.button(t("cancel"), key="cancel_gen_questions_empty"):
+            if "generated_questions" in st.session_state:
+                del st.session_state["generated_questions"]
+            st.rerun()
+        return
+
+    st.write(t("generated_questions_instructions"))
+
+    # Let user select which questions to add
+    selected = []
+    for i, q in enumerate(questions):
+        time_label = ""
+        time_start = q.get("time_start", "")
+        time_end = q.get("time_end", "")
+        if time_start and time_end:
+            time_label = f" ({time_start} - {time_end})"
+        with st.expander(f"**{i+1}. {q.get('question', '')}**{time_label}", expanded=True):
+            include = st.checkbox(t("include_question"), value=True, key=f"include_q_{i}")
+            if include:
+                selected.append(i)
+            # Show time range if available
+            if time_start and time_end:
+                st.caption(t("video_time_range", start=time_start, end=time_end))
+            st.write(f"**{t('options')}:**")
+            opts = q.get("options", [])
+            correct_idx = q.get("correct", 0)
+            for j, opt in enumerate(opts):
+                prefix = "✓ " if j == correct_idx else "  "
+                st.write(f"{prefix}{opt}")
+            if q.get("explanation"):
+                st.write(f"**{t('explanation')}:** {q['explanation']}")
+
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button(t("confirm"), type="primary", key="confirm_gen_questions"):
+            added = 0
+            next_num = get_next_question_num(test_id)
+            for i in selected:
+                q = questions[i]
+                opts = q.get("options", [t("option_a"), t("option_b"), t("option_c"), t("option_d")])
+                # Clean option prefixes like "A) " if present
+                clean_opts = []
+                for opt in opts:
+                    opt_clean = opt.strip()
+                    if len(opt_clean) > 2 and opt_clean[1] in ").]":
+                        opt_clean = opt_clean[2:].strip()
+                    clean_opts.append(opt_clean)
+                q_id = add_question(
+                    test_id, next_num + added, "general",
+                    q.get("question", ""),
+                    clean_opts,
+                    q.get("correct", 0),
+                    q.get("explanation", ""),
+                    source=f"material:{material_id}",
+                )
+                # Link question to material with time range as context
+                time_start = q.get("time_start", "")
+                time_end = q.get("time_end", "")
+                context = f"{time_start}-{time_end}" if time_start and time_end else ""
+                set_question_material_links(q_id, [{"material_id": material_id, "context": context}])
+                added += 1
+            del st.session_state["generated_questions"]
+            st.success(t("questions_added", n=added))
+            st.rerun()
+    with col_cancel:
+        if st.button(t("cancel"), key="cancel_gen_questions"):
+            del st.session_state["generated_questions"]
             st.rerun()
 
 
@@ -720,14 +1396,43 @@ function escHtml(s) {{
         st.rerun()
 
 
-def _render_test_card(test, favorites, prefix="", has_access=True):
+def _toggle_bulk_test(test_id):
+    """Callback to toggle test selection in bulk delete mode."""
+    if "bulk_delete_tests" not in st.session_state:
+        st.session_state.bulk_delete_tests = set()
+    if test_id in st.session_state.bulk_delete_tests:
+        st.session_state.bulk_delete_tests.discard(test_id)
+    else:
+        st.session_state.bulk_delete_tests.add(test_id)
+
+def _toggle_bulk_question(db_id):
+    """Callback to toggle question selection in bulk delete mode."""
+    if "bulk_delete_questions" not in st.session_state:
+        st.session_state.bulk_delete_questions = set()
+    if db_id in st.session_state.bulk_delete_questions:
+        st.session_state.bulk_delete_questions.discard(db_id)
+    else:
+        st.session_state.bulk_delete_questions.add(db_id)
+
+
+def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_mode=False):
     """Render a single test card with heart and select button."""
     test_id = test["id"]
     is_fav = test_id in favorites
     logged_in = _is_logged_in()
 
     with st.container(border=True):
-        if logged_in:
+        # Determine columns based on mode
+        if bulk_delete_mode:
+            col_check, col_info, col_btn = st.columns([0.5, 4, 1])
+            with col_check:
+                # Initialize set if needed
+                if "bulk_delete_tests" not in st.session_state:
+                    st.session_state.bulk_delete_tests = set()
+                is_selected = test_id in st.session_state.bulk_delete_tests
+                st.checkbox("", value=is_selected, key=f"{prefix}bulk_select_{test_id}",
+                           label_visibility="collapsed", on_change=_toggle_bulk_test, args=(test_id,))
+        elif logged_in:
             col_fav, col_info, col_btn = st.columns([0.5, 4, 1])
             with col_fav:
                 heart = "❤️" if is_fav else "🤍"
@@ -759,16 +1464,87 @@ def _render_test_card(test, favorites, prefix="", has_access=True):
                 st.button(t("select"), key=f"{prefix}select_{test_id}", use_container_width=True, disabled=True)
 
 
+@st.dialog(t("import_test"))
+def _import_test_dialog():
+    """Dialog for importing a test from JSON file."""
+    import json as json_module
+
+    st.write(t("import_test_desc"))
+
+    uploaded_file = st.file_uploader(t("select_json_file"), type=["json"], key="import_test_file")
+
+    if uploaded_file is not None:
+        try:
+            content = uploaded_file.read().decode("utf-8")
+            json_data = json_module.loads(content)
+
+            # Preview
+            if isinstance(json_data, dict):
+                st.info(f"**{t('title')}:** {json_data.get('title', 'N/A')}")
+                if json_data.get("description"):
+                    st.caption(json_data["description"])
+                q_count = len(json_data.get("questions", []))
+            else:
+                q_count = len(json_data)
+            st.caption(t("n_questions", n=q_count))
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(t("import"), type="primary", use_container_width=True):
+                    try:
+                        test_id, title = import_test_from_json(st.session_state.user_id, json_data)
+                        st.session_state.import_success = t("test_imported", title=title)
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
+                    except Exception as e:
+                        st.error(t("import_error", error=str(e)))
+            with col2:
+                if st.button(t("cancel"), use_container_width=True):
+                    st.rerun()
+        except json_module.JSONDecodeError:
+            st.error(t("invalid_json"))
+
+
 def show_test_catalog():
     """Show a searchable catalog of available tests."""
     user_id = st.session_state.get("user_id")
     all_tests = get_all_tests(user_id)
-
-    if not all_tests:
-        st.error(t("no_tests"))
-        return
+    logged_in = _is_logged_in()
 
     st.header(t("available_tests"))
+
+    # Show import success message if any
+    if "import_success" in st.session_state:
+        st.success(st.session_state.import_success)
+        del st.session_state.import_success
+
+    # Admin buttons: create, import, bulk delete
+    bulk_delete_mode = False
+    if _is_global_admin():
+        col_create, col_import, col_bulk = st.columns([1, 1, 1])
+        with col_create:
+            if _can_create_tests():
+                if st.button(t("create_test"), type="secondary", use_container_width=True):
+                    st.session_state.page = "Crear Test"
+                    st.rerun()
+        with col_import:
+            if st.button(t("import_test"), type="secondary", use_container_width=True):
+                _import_test_dialog()
+        with col_bulk:
+            if all_tests:
+                bulk_delete_mode = st.toggle(t("bulk_delete_mode"), key="test_bulk_delete_mode")
+                if bulk_delete_mode:
+                    if "bulk_delete_tests" not in st.session_state:
+                        st.session_state.bulk_delete_tests = set()
+    elif logged_in and _can_create_tests():
+        if st.button(t("create_test"), type="secondary"):
+            st.session_state.page = "Crear Test"
+            st.rerun()
+
+    if not all_tests:
+        st.info(t("no_tests"))
+        return
 
     col_search, col_lang = st.columns([3, 1])
     with col_search:
@@ -784,13 +1560,21 @@ def show_test_catalog():
             key="test_lang_filter",
         )
 
-    logged_in = _is_logged_in()
     favorites = get_favorite_tests(st.session_state.user_id) if logged_in else set()
 
-    if logged_in:
-        if st.button(t("create_test"), type="secondary"):
-            st.session_state.page = "Crear Test"
-            st.rerun()
+    # Show bulk delete controls below the create button
+    if bulk_delete_mode:
+        selected_count = len(st.session_state.get("bulk_delete_tests", set()))
+        col_info, col_del = st.columns([3, 1])
+        with col_info:
+            st.info(t("selected_items", n=selected_count))
+        with col_del:
+            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True):
+                for test_id in st.session_state.bulk_delete_tests:
+                    delete_test(test_id)
+                st.session_state.bulk_delete_tests = set()
+                st.success(t("tests_deleted", n=selected_count))
+                st.rerun()
 
     filtered_tests = [
         tt for tt in all_tests
@@ -826,20 +1610,20 @@ def show_test_catalog():
     if fav_tests:
         st.subheader(t("favorites"))
         for test in fav_tests:
-            _render_test_card(test, favorites, prefix="fav_", has_access=_has_access(test))
+            _render_test_card(test, favorites, prefix="fav_", has_access=_has_access(test), bulk_delete_mode=bulk_delete_mode)
 
     if shared_tests:
         st.subheader(t("shared_with_me"))
         for test in shared_tests:
             if test["id"] not in {tt["id"] for tt in fav_tests}:
-                _render_test_card(test, favorites, prefix="shared_", has_access=True)
+                _render_test_card(test, favorites, prefix="shared_", has_access=True, bulk_delete_mode=bulk_delete_mode)
 
     other_tests = [tt for tt in other_tests if tt["id"] not in shared_test_ids]
     if other_tests:
         if fav_tests or shared_tests:
             st.subheader(t("all_tests"))
         for test in other_tests:
-            _render_test_card(test, favorites, has_access=_has_access(test))
+            _render_test_card(test, favorites, has_access=_has_access(test), bulk_delete_mode=bulk_delete_mode)
 
 
 def show_test_config():
@@ -953,7 +1737,7 @@ def show_test_config():
                         break
 
     is_owner = _is_logged_in() and test["owner_id"] == st.session_state.user_id
-    can_edit = is_owner or (
+    can_edit = _is_global_admin() or is_owner or (
         _is_logged_in() and get_user_role_for_test(test_id, st.session_state.user_id) in ("guest", "reviewer", "admin")
     )
     # Students can take the test but not view the editor
@@ -1506,6 +2290,56 @@ def show_create_test():
 
 def show_test_editor():
     """Show the test editor page for editing metadata and questions."""
+    import json as _json_editor
+
+    # Handle captured pause time from video player (via URL params) FIRST
+    # This must happen before any early returns to ensure params are processed
+    params = st.query_params
+    capture_t = params.get("capture_t")
+    capture_mat_id = params.get("capture_mat_id")
+    if capture_t is not None and capture_mat_id is not None:
+        try:
+            captured_seconds = int(capture_t)
+            captured_questions = int(params.get("capture_n", "1"))
+            captured_mat_id_int = int(capture_mat_id)
+
+            # Fetch the material directly by ID
+            mat = get_material_by_id(captured_mat_id_int)
+            if mat:
+                # Restore session state if lost during redirect
+                if "editing_test_id" not in st.session_state:
+                    st.session_state.editing_test_id = mat["test_id"]
+                    st.session_state.page = "Editar Test"
+
+                # Update the pause times
+                existing_pause_times = []
+                if mat.get("pause_times"):
+                    try:
+                        existing_pause_times = _json_editor.loads(mat["pause_times"])
+                    except:
+                        pass
+                existing_times = [p["t"] for p in existing_pause_times]
+                if captured_seconds not in existing_times:
+                    existing_pause_times.append({"t": captured_seconds, "n": captured_questions})
+                    existing_pause_times.sort(key=lambda x: x["t"])
+                    pause_json = _json_editor.dumps(existing_pause_times)
+                    update_material_pause_times(captured_mat_id_int, pause_json)
+                    st.session_state.pause_time_added = f"✓ {t('time_added')}: {_seconds_to_mmss(captured_seconds)}"
+
+                # Clear dialog session state so it reads fresh data next time
+                dialog_state_key = f"editing_pause_times_{captured_mat_id_int}"
+                if dialog_state_key in st.session_state:
+                    del st.session_state[dialog_state_key]
+                if "_pause_dialog_mat_id" in st.session_state:
+                    del st.session_state["_pause_dialog_mat_id"]
+
+            # Clear the params and rerun
+            st.query_params.clear()
+            st.rerun()
+        except (ValueError, TypeError) as e:
+            st.error(f"Error processing captured time: {e}")
+            st.query_params.clear()
+
     test_id = st.session_state.get("editing_test_id")
     if not test_id:
         st.session_state.page = "Tests"
@@ -1519,7 +2353,9 @@ def show_test_editor():
 
     user_id = st.session_state.get("user_id")
     is_owner = test["owner_id"] == user_id
-    if is_owner:
+    if _is_global_admin():
+        user_role = "owner"  # Global admins have full access to all tests
+    elif is_owner:
         user_role = "owner"
     else:
         user_role = get_user_role_for_test(test_id, user_id)
@@ -1584,6 +2420,11 @@ def show_test_editor():
 
     materials = get_test_materials(test_id)
 
+    # Show success message if time was just added (set by query param handler at top)
+    if "pause_time_added" in st.session_state:
+        st.success(st.session_state.pause_time_added)
+        del st.session_state.pause_time_added
+
     # --- Materials (owner and admin only) ---
     if user_role in ("owner", "admin"):
         st.subheader(t("reference_materials_header"))
@@ -1615,7 +2456,7 @@ def show_test_editor():
                         key=f"dl_mat_{mat['id']}",
                     )
                 is_yt = mat["material_type"] == "youtube"
-                cols = st.columns([1, 1, 1, 1, 1] if is_yt else [1, 1, 1])
+                cols = st.columns([1, 1, 1, 1, 1, 1] if is_yt else [1, 1, 1])
                 with cols[0]:
                     if st.button(t("save_material"), key=f"save_mat_{mat['id']}", type="primary"):
                         pause_json = _parse_pause_times(new_pause) if is_yt else ""
@@ -1623,17 +2464,30 @@ def show_test_editor():
                         st.rerun()
                 with cols[1]:
                     if st.button(t("generate"), key=f"gen_mat_{mat['id']}"):
-                        next_num = get_next_question_num(test_id)
-                        mat_label = mat["title"] or t("no_title")
-                        for i in range(3):
-                            add_question(
-                                test_id, next_num + i, "general",
-                                t("generated_question", name=mat_label, n=i+1),
-                                [t("option_a"), t("option_b"), t("option_c"), t("option_d")],
-                                0, t("generated_explanation"),
-                                source=f"material:{mat['id']}",
-                            )
-                        st.rerun()
+                        if is_yt:
+                            # For YouTube, use AI to generate questions from transcript
+                            transcript_text = mat.get("transcript", "")
+                            if not transcript_text:
+                                transcript_text = _fetch_youtube_transcript(mat["url"])
+                                if transcript_text:
+                                    update_material_transcript(mat["id"], transcript_text)
+                            if transcript_text:
+                                _show_generate_questions_dialog(test_id, mat["id"], transcript_text)
+                            else:
+                                st.warning(t("no_transcript"))
+                        else:
+                            # For other materials, create placeholder questions
+                            next_num = get_next_question_num(test_id)
+                            mat_label = mat["title"] or t("no_title")
+                            for i in range(3):
+                                add_question(
+                                    test_id, next_num + i, "general",
+                                    t("generated_question", name=mat_label, n=i+1),
+                                    [t("option_a"), t("option_b"), t("option_c"), t("option_d")],
+                                    0, t("generated_explanation"),
+                                    source=f"material:{mat['id']}",
+                                )
+                            st.rerun()
                 if is_yt:
                     with cols[2]:
                         if st.button(f"📜 {t('transcript')}", key=f"transcript_mat_{mat['id']}"):
@@ -1658,6 +2512,9 @@ def show_test_editor():
                                 _show_generate_topics_dialog(test_id, transcript_text, existing_tags)
                             else:
                                 st.warning(t("no_transcript"))
+                    with cols[4]:
+                        if st.button("⏱️", key=f"pause_times_mat_{mat['id']}", help=t("pause_time_selector_title")):
+                            _show_pause_time_selector_dialog(mat["id"], mat["url"], mat.get("pause_times", ""))
                 with cols[-1]:
                     if st.button("🗑️", key=f"del_mat_{mat['id']}"):
                         delete_test_material(mat["id"])
@@ -1673,8 +2530,22 @@ def show_test_editor():
         mat_file = None
         mat_pause_times = ""
         if mat_type in ("youtube", "url"):
-            mat_url = st.text_input(t("url"), key="new_mat_url")
+            col_url, col_pause_btn = st.columns([4, 1]) if mat_type == "youtube" else (st.columns([1]),)
+            with col_url if mat_type == "youtube" else st.container():
+                mat_url = st.text_input(t("url"), key="new_mat_url")
             if mat_type == "youtube":
+                with col_pause_btn:
+                    st.write("")  # Spacing to align with input
+                    # Show pause times button only if URL is entered
+                    if mat_url.strip() and _extract_youtube_id(mat_url.strip()):
+                        if st.button(t("set_pause_times"), key="new_mat_pause_btn"):
+                            _show_new_material_pause_time_dialog(mat_url.strip())
+                # Get pause times from session state if set via dialog
+                if "new_material_pause_times" in st.session_state:
+                    stored_pause_times = st.session_state.new_material_pause_times
+                    if stored_pause_times:
+                        st.info(f"⏱️ {len(stored_pause_times)} {t('marked_pause_times').lower()}")
+                # Also allow manual entry
                 mat_pause_times = st.text_input(t("pause_times_label"), key="new_mat_pause_times", help=t("pause_times_help"))
         else:
             file_types = ["pdf"] if mat_type == "pdf" else ["png", "jpg", "jpeg", "gif"]
@@ -1687,7 +2558,13 @@ def show_test_editor():
             elif mat_type in ("pdf", "image") and not file_data:
                 st.warning(t("file_required"))
             else:
-                pause_json = _parse_pause_times(mat_pause_times) if mat_type == "youtube" else ""
+                # Use pause times from dialog if available, otherwise parse text input
+                if mat_type == "youtube" and "new_material_pause_times" in st.session_state and st.session_state.new_material_pause_times:
+                    import json as _json
+                    pause_json = _json.dumps(st.session_state.new_material_pause_times)
+                    del st.session_state.new_material_pause_times
+                else:
+                    pause_json = _parse_pause_times(mat_pause_times) if mat_type == "youtube" else ""
                 transcript = ""
                 if mat_type == "youtube" and mat_url.strip():
                     transcript = _fetch_youtube_transcript(mat_url.strip())
@@ -1754,19 +2631,54 @@ def show_test_editor():
         with col_add_tag:
             if st.button(t("add_btn")):
                 if new_tag_name and new_tag_name.strip():
-                    next_num = get_next_question_num(test_id)
-                    add_question(test_id, next_num, new_tag_name.strip(), t("new_question_text"), [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, "")
+                    add_test_tag(test_id, new_tag_name.strip())
                     st.rerun()
 
         st.divider()
 
     # --- Questions ---
+    all_tags = get_test_tags(test_id)
+
     with st.expander(t("questions_header", n=len(questions)), expanded=False):
         if not read_only:
-            if st.button(t("add_question")):
-                next_num = get_next_question_num(test_id)
-                add_question(test_id, next_num, "general", t("new_question_text"), [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, "")
-                st.rerun()
+            col_add_q, col_bulk_q = st.columns([1, 1])
+            with col_add_q:
+                if st.button(t("add_question"), use_container_width=True):
+                    next_num = get_next_question_num(test_id)
+                    default_tag = all_tags[0] if all_tags else "general"
+                    add_question(test_id, next_num, default_tag, t("new_question_text"), [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, "")
+                    st.rerun()
+            with col_bulk_q:
+                q_bulk_delete = st.toggle(t("bulk_delete_mode"), key="q_bulk_delete_mode")
+                if q_bulk_delete:
+                    if "bulk_delete_questions" not in st.session_state:
+                        st.session_state.bulk_delete_questions = set()
+
+            if q_bulk_delete and questions:
+                # Select/unselect all + count + delete button
+                all_q_ids = {q["db_id"] for q in questions}
+                selected_count = len(st.session_state.get("bulk_delete_questions", set()))
+                col_sel_all, col_info_q, col_del_q = st.columns([1, 2, 1])
+                with col_sel_all:
+                    all_selected = st.session_state.get("bulk_delete_questions", set()) >= all_q_ids
+                    if st.checkbox(t("select_all"), value=all_selected, key="q_select_all"):
+                        st.session_state.bulk_delete_questions = set(all_q_ids)
+                    else:
+                        if all_selected:
+                            st.session_state.bulk_delete_questions = set()
+                with col_info_q:
+                    selected_count = len(st.session_state.get("bulk_delete_questions", set()))
+                    st.info(t("selected_items", n=selected_count))
+                with col_del_q:
+                    if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True, key="del_selected_questions"):
+                        for db_id in st.session_state.bulk_delete_questions:
+                            delete_question(db_id)
+                        deleted_n = len(st.session_state.bulk_delete_questions)
+                        st.session_state.bulk_delete_questions = set()
+                        st.success(t("questions_deleted", n=deleted_n))
+                        st.rerun()
+        else:
+            q_bulk_delete = False
 
         # Pre-load all question-material links
         all_q_db_ids = [q["db_id"] for q in questions]
@@ -1774,7 +2686,16 @@ def show_test_editor():
         mat_by_id = {m["id"]: m for m in materials}
 
         for q in questions:
-            with st.expander(f"#{q['id']} — {q['question'][:80]}"):
+            if q_bulk_delete:
+                cb_col, exp_col = st.columns([0.05, 0.95])
+                with cb_col:
+                    is_selected = q["db_id"] in st.session_state.get("bulk_delete_questions", set())
+                    st.checkbox("", value=is_selected, key=f"q_bulk_cb_{q['db_id']}",
+                               label_visibility="collapsed", on_change=_toggle_bulk_question, args=(q["db_id"],))
+                expander_parent = exp_col
+            else:
+                expander_parent = st
+            with expander_parent.expander(f"#{q['id']} — {q['question'][:80]}"):
                 q_key = f"q_{q['db_id']}"
                 source = q.get("source", "manual")
                 if source == "manual":
@@ -1786,30 +2707,46 @@ def show_test_editor():
                 else:
                     source_label = source
                 st.caption(t("source", name=source_label))
-                q_tag = st.text_input(t("topic_label"), value=q["tag"], key=f"{q_key}_tag", disabled=read_only)
+                # Build tag options for selectbox
+                tag_options = list(all_tags)
+                if q["tag"] and q["tag"] not in tag_options:
+                    tag_options.append(q["tag"])
+                if not tag_options:
+                    tag_options = [""]
+                current_idx = tag_options.index(q["tag"]) if q["tag"] in tag_options else 0
+                q_tag = st.selectbox(t("topic_label"), options=tag_options, index=current_idx, key=f"{q_key}_tag", disabled=read_only)
                 q_text = st.text_area(t("question_label"), value=q["question"], key=f"{q_key}_text", disabled=read_only)
                 q_explanation = st.text_area(t("explanation_label"), value=q.get("explanation", ""), key=f"{q_key}_expl", disabled=read_only)
 
                 st.write(t("options_header"))
                 options = []
+                can_remove = not read_only and len(q["options"]) > 2
                 for oi in range(len(q["options"])):
-                    opt = st.text_input(t("option_n", n=oi + 1), value=q["options"][oi], key=f"{q_key}_opt_{oi}", disabled=read_only)
+                    if can_remove:
+                        opt_col, rm_col = st.columns([0.9, 0.1])
+                        with opt_col:
+                            opt = st.text_input(t("option_n", n=oi + 1), value=q["options"][oi], key=f"{q_key}_opt_{oi}", disabled=read_only)
+                        with rm_col:
+                            st.markdown("<div style='margin-top:1.65rem'></div>", unsafe_allow_html=True)
+                            if st.button("✕", key=f"{q_key}_rm_opt_{oi}", help=t("remove_option_n", n=oi + 1)):
+                                new_opts = [o for j, o in enumerate(q["options"]) if j != oi]
+                                new_ans = q["answer_index"]
+                                if oi < new_ans:
+                                    new_ans -= 1
+                                elif oi == new_ans:
+                                    new_ans = 0
+                                new_ans = min(new_ans, len(new_opts) - 1)
+                                update_question(q["db_id"], q["tag"], q["question"], new_opts, new_ans, q.get("explanation", ""))
+                                st.rerun()
+                    else:
+                        opt = st.text_input(t("option_n", n=oi + 1), value=q["options"][oi], key=f"{q_key}_opt_{oi}", disabled=read_only)
                     options.append(opt)
 
                 if not read_only:
-                    col_add, col_rm = st.columns(2)
-                    with col_add:
-                        if st.button(t("add_option"), key=f"{q_key}_add_opt"):
-                            new_opts = q["options"] + [t("option_n", n=len(q['options']) + 1)]
-                            update_question(q["db_id"], q["tag"], q["question"], new_opts, q["answer_index"], q.get("explanation", ""))
-                            st.rerun()
-                    with col_rm:
-                        if len(q["options"]) > 2:
-                            if st.button(t("remove_option"), key=f"{q_key}_rm_opt"):
-                                new_opts = q["options"][:-1]
-                                new_ans = min(q["answer_index"], len(new_opts) - 1)
-                                update_question(q["db_id"], q["tag"], q["question"], new_opts, new_ans, q.get("explanation", ""))
-                                st.rerun()
+                    if st.button(t("add_option"), key=f"{q_key}_add_opt"):
+                        new_opts = q["options"] + [t("option_n", n=len(q['options']) + 1)]
+                        update_question(q["db_id"], q["tag"], q["question"], new_opts, q["answer_index"], q.get("explanation", ""))
+                        st.rerun()
 
                 q_answer = st.selectbox(
                     t("correct_answer_select"),
@@ -1944,7 +2881,28 @@ def _load_profile_to_session():
         profile = get_user_profile(st.session_state.user_id)
         st.session_state.display_name = profile["display_name"] or st.session_state.username
         st.session_state.avatar_bytes = profile["avatar"]
+        st.session_state.global_role = get_user_global_role(st.session_state.user_id)
         st.session_state.profile_loaded = True
+
+
+def _get_global_role():
+    """Get the current user's global role. Returns 'free' if not logged in."""
+    return st.session_state.get("global_role", "free")
+
+
+def _is_premium_or_admin():
+    """Check if user has premium or admin global role."""
+    return _get_global_role() in ("premium", "admin")
+
+
+def _is_global_admin():
+    """Check if user has admin global role."""
+    return _get_global_role() == "admin"
+
+
+def _can_create_tests():
+    """Check if user can create tests. Students cannot create tests."""
+    return _get_global_role() in ("free", "premium", "admin")
 
 
 def show_profile():
@@ -1990,10 +2948,91 @@ def show_profile():
         st.rerun()
 
 
-def _render_program_card(prog, user_id, has_access=True, prefix=""):
+def show_admin_panel():
+    """Show the admin panel for managing user roles."""
+    if not _is_global_admin():
+        st.error(t("no_permission"))
+        return
+
+    st.header(t("admin_panel"))
+    st.write(t("admin_panel_desc"))
+
+    # Get all users
+    users = get_all_users_with_roles()
+
+    if not users:
+        st.info(t("no_users"))
+        return
+
+    # Search filter
+    search = st.text_input(t("search_user"), placeholder=t("search_user_placeholder"), key="admin_user_search")
+
+    filtered_users = users
+    if search:
+        search_lower = search.lower()
+        filtered_users = [u for u in users if search_lower in u["email"].lower() or (u["display_name"] and search_lower in u["display_name"].lower())]
+
+    st.write(t("total_users", n=len(filtered_users)))
+
+    # Role options
+    role_options = ["student", "free", "premium", "admin"]
+    role_labels = {
+        "student": t("global_role_student"),
+        "free": t("global_role_free"),
+        "premium": t("global_role_premium"),
+        "admin": t("global_role_admin"),
+    }
+
+    # Display users in a table-like format
+    for user in filtered_users:
+        with st.container(border=True):
+            col_info, col_role = st.columns([3, 2])
+            with col_info:
+                display = user["display_name"] or user["email"]
+                st.write(f"**{display}**")
+                if user["display_name"]:
+                    st.caption(user["email"])
+            with col_role:
+                current_role = user["global_role"] or "free"
+                current_idx = role_options.index(current_role) if current_role in role_options else 1
+                new_role = st.selectbox(
+                    t("role"),
+                    options=role_options,
+                    index=current_idx,
+                    format_func=lambda x: role_labels.get(x, x),
+                    key=f"role_{user['id']}",
+                    label_visibility="collapsed",
+                )
+                if new_role != current_role:
+                    set_user_global_role(user["id"], new_role)
+                    st.success(t("role_updated", user=display, role=role_labels[new_role]))
+                    st.rerun()
+
+
+def _toggle_bulk_program(prog_id):
+    """Callback to toggle program selection in bulk delete mode."""
+    if "bulk_delete_programs" not in st.session_state:
+        st.session_state.bulk_delete_programs = set()
+    if prog_id in st.session_state.bulk_delete_programs:
+        st.session_state.bulk_delete_programs.discard(prog_id)
+    else:
+        st.session_state.bulk_delete_programs.add(prog_id)
+
+
+def _render_program_card(prog, user_id, has_access=True, prefix="", bulk_delete_mode=False):
     """Render a single program card."""
     with st.container(border=True):
-        col_info, col_btn = st.columns([4, 1])
+        if bulk_delete_mode:
+            col_check, col_info, col_btn = st.columns([0.5, 4, 1])
+            with col_check:
+                # Initialize set if needed
+                if "bulk_delete_programs" not in st.session_state:
+                    st.session_state.bulk_delete_programs = set()
+                is_selected = prog["id"] in st.session_state.bulk_delete_programs
+                st.checkbox("", value=is_selected, key=f"{prefix}bulk_select_prog_{prog['id']}",
+                           label_visibility="collapsed", on_change=_toggle_bulk_program, args=(prog["id"],))
+        else:
+            col_info, col_btn = st.columns([4, 1])
         with col_info:
             title_display = prog["title"]
             if prog.get("visibility") == "private" and not has_access:
@@ -2012,7 +3051,7 @@ def _render_program_card(prog, user_id, has_access=True, prefix=""):
                 st.button(t("select"), key=f"{prefix}prog_sel_{prog['id']}", use_container_width=True, disabled=True)
             is_owner = prog.get("owner_id") == user_id
             prog_role = get_user_role_for_program(prog["id"], user_id) if not is_owner else None
-            can_edit = is_owner or prog_role in ("guest", "reviewer", "admin")
+            can_edit = _is_global_admin() or is_owner or prog_role in ("guest", "reviewer", "admin")
             if can_edit:
                 if st.button(t("edit"), key=f"{prefix}prog_edit_{prog['id']}", use_container_width=True):
                     st.session_state.editing_program_id = prog["id"]
@@ -2029,9 +3068,37 @@ def show_programs():
 
     st.header(t("programs_header"))
 
-    if st.button(t("create_program"), type="secondary"):
-        st.session_state.page = "Crear Programa"
-        st.rerun()
+    # Admin bulk delete mode
+    bulk_delete_mode = False
+    if _is_global_admin():
+        col_create, col_bulk = st.columns([1, 1])
+        with col_create:
+            if st.button(t("create_program"), type="secondary", use_container_width=True):
+                st.session_state.page = "Crear Programa"
+                st.rerun()
+        with col_bulk:
+            bulk_delete_mode = st.toggle(t("bulk_delete_mode"), key="prog_bulk_delete_mode")
+            if bulk_delete_mode:
+                if "bulk_delete_programs" not in st.session_state:
+                    st.session_state.bulk_delete_programs = set()
+    else:
+        if st.button(t("create_program"), type="secondary"):
+            st.session_state.page = "Crear Programa"
+            st.rerun()
+
+    # Show bulk delete controls below the create button
+    if bulk_delete_mode:
+        selected_count = len(st.session_state.get("bulk_delete_programs", set()))
+        col_info, col_del = st.columns([3, 1])
+        with col_info:
+            st.info(t("selected_items", n=selected_count))
+        with col_del:
+            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True):
+                for prog_id in st.session_state.bulk_delete_programs:
+                    delete_program(prog_id)
+                st.session_state.bulk_delete_programs = set()
+                st.success(t("programs_deleted", n=selected_count))
+                st.rerun()
 
     # Build accessible set
     accessible_ids = shared_prog_ids | {p["id"] for p in programs if p.get("owner_id") == user_id}
@@ -2047,18 +3114,18 @@ def show_programs():
     if my_progs:
         st.subheader(t("my_programs"))
         for prog in my_progs:
-            _render_program_card(prog, user_id, has_access=True, prefix="my_")
+            _render_program_card(prog, user_id, has_access=True, prefix="my_", bulk_delete_mode=bulk_delete_mode)
 
     if shared_programs:
         st.subheader(t("shared_programs"))
         for prog in shared_programs:
-            _render_program_card(prog, user_id, has_access=True, prefix="shared_")
+            _render_program_card(prog, user_id, has_access=True, prefix="shared_", bulk_delete_mode=bulk_delete_mode)
 
     if other_progs:
         if my_progs or shared_programs:
             st.subheader(t("all_programs"))
         for prog in other_progs:
-            _render_program_card(prog, user_id, has_access=_prog_has_access(prog))
+            _render_program_card(prog, user_id, has_access=_prog_has_access(prog), bulk_delete_mode=bulk_delete_mode)
 
     if not programs and not shared_programs:
         st.info(t("no_programs"))
@@ -2100,7 +3167,9 @@ def show_program_editor():
 
     user_id = st.session_state.get("user_id")
     is_owner = prog["owner_id"] == user_id
-    if is_owner:
+    if _is_global_admin():
+        prog_role = "owner"  # Global admins have full access to all programs
+    elif is_owner:
         prog_role = "owner"
     else:
         prog_role = get_user_role_for_program(program_id, user_id)
@@ -2421,9 +3490,11 @@ def main():
 
         st.markdown("---")
         nav_items = [("📝", "Tests", t("tests"))]
-        if logged_in:
+        if logged_in and _is_premium_or_admin():
             nav_items.append(("📊", "Dashboard", t("dashboard")))
             nav_items.append(("📚", "Programas", t("programs")))
+        if logged_in and _is_global_admin():
+            nav_items.append(("⚙️", "Admin", t("admin_panel")))
         for icon, page_id, display in nav_items:
             is_active = st.session_state.page == page_id
             btn_type = "primary" if is_active else "secondary"
@@ -2434,6 +3505,10 @@ def main():
 
     if "quiz_started" not in st.session_state:
         st.session_state.quiz_started = False
+
+    # Check for pause time capture query params and route to editor
+    if st.query_params.get("capture_t") is not None and st.query_params.get("capture_mat_id") is not None:
+        st.session_state.page = "Editar Test"
 
     if logged_in and st.session_state.page == "Perfil":
         show_profile()
@@ -2453,6 +3528,8 @@ def main():
         show_program_editor()
     elif logged_in and st.session_state.page == "Configurar Programa":
         show_program_config()
+    elif logged_in and _is_global_admin() and st.session_state.page == "Admin":
+        show_admin_panel()
     elif st.session_state.quiz_started:
         show_quiz()
     else:

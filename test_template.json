@@ -1,0 +1,45 @@
+{
+  "title": "Test Title",
+  "description": "Optional test description",
+  "author": "Author Name",
+  "language": "es",
+  "visibility": "public",
+  "materials": [
+    {
+      "id": 1,
+      "material_type": "url",
+      "title": "Video or resource title",
+      "url": "https://example.com/video",
+      "pause_times": "60,120,180",
+      "transcript": "Optional transcript text",
+      "questions_per_pause": 1
+    }
+  ],
+  "questions": [
+    {
+      "id": 1,
+      "tag": "topic_name",
+      "question": "Question text here?",
+      "options": [
+        "Option A",
+        "Option B",
+        "Option C",
+        "Option D"
+      ],
+      "answer_index": 0,
+      "explanation": "Why option A is correct",
+      "material_refs": [
+        {
+          "material_id": 1,
+          "context": "How this material relates to the question"
+        }
+      ]
+    }
+  ],
+  "collaborators": [
+    {
+      "email": "user@example.com",
+      "role": "guest"
+    }
+  ]
+}

@@ -129,6 +129,13 @@ def init_db():
             FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE,
             UNIQUE(test_id, user_email)
         );
+        CREATE TABLE IF NOT EXISTS test_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            test_id INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE,
+            UNIQUE(test_id, tag)
+        );
     """)
     # Migrations for older DB versions
     cursor = conn.execute("PRAGMA table_info(question_history)")
@@ -144,6 +151,9 @@ def init_db():
         conn.commit()
     if "avatar" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN avatar BLOB")
+        conn.commit()
+    if "global_role" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN global_role TEXT DEFAULT 'free'")
         conn.commit()
 
     # Add pause_times and questions_per_pause to test_materials
@@ -212,6 +222,13 @@ def init_db():
     if "visibility" not in prog_cols:
         conn.execute("ALTER TABLE programs ADD COLUMN visibility TEXT DEFAULT 'public'")
         conn.commit()
+
+    # Populate test_tags from existing question tags
+    conn.execute("""
+        INSERT OR IGNORE INTO test_tags (test_id, tag)
+        SELECT DISTINCT test_id, tag FROM questions WHERE tag != ''
+    """)
+    conn.commit()
 
     conn.close()
 
@@ -310,8 +327,96 @@ def _import_json_file(conn, file_path):
                     (q_cursor.lastrowid, new_mid, ref.get("context", "")),
                 )
 
+    # Populate test_tags from imported questions
+    conn.execute("""
+        INSERT OR IGNORE INTO test_tags (test_id, tag)
+        SELECT DISTINCT test_id, tag FROM questions WHERE test_id = ? AND tag != ''
+    """, (test_id,))
+
     conn.commit()
     return test_id
+
+
+def import_test_from_json(owner_id, json_content):
+    """Import a test from JSON content. Returns (test_id, title) or raises ValueError."""
+    conn = get_connection()
+
+    if isinstance(json_content, list):
+        title = "Imported Test"
+        description = ""
+        author = ""
+        questions_data = json_content
+        language = ""
+        visibility = "public"
+        materials_data = []
+        collabs_data = []
+    else:
+        title = json_content.get("title", "Imported Test")
+        description = json_content.get("description", "")
+        author = json_content.get("author", "")
+        questions_data = json_content.get("questions", [])
+        language = json_content.get("language", "")
+        visibility = json_content.get("visibility", "public")
+        materials_data = json_content.get("materials", [])
+        collabs_data = json_content.get("collaborators", [])
+
+    if not questions_data:
+        conn.close()
+        raise ValueError("No questions found in JSON")
+
+    cursor = conn.execute(
+        "INSERT INTO tests (owner_id, title, description, author, is_public, language, visibility) VALUES (?, ?, ?, ?, 1, ?, ?)",
+        (owner_id, title, description, author, language, visibility),
+    )
+    test_id = cursor.lastrowid
+
+    # Import materials
+    mat_id_map = {}
+    for mat in materials_data:
+        old_id = mat.get("id")
+        mat_cursor = conn.execute(
+            "INSERT INTO test_materials (test_id, material_type, title, url, pause_times, transcript) VALUES (?, ?, ?, ?, ?, ?)",
+            (test_id, mat.get("material_type", "url"), mat.get("title", ""), mat.get("url", ""),
+             mat.get("pause_times", ""), mat.get("transcript", "")),
+        )
+        if old_id is not None:
+            mat_id_map[old_id] = mat_cursor.lastrowid
+
+    # Import collaborators
+    for collab in collabs_data:
+        email = collab.get("email", "").strip()
+        role = collab.get("role", "guest")
+        if email and role in ("student", "guest", "reviewer", "admin"):
+            conn.execute(
+                "INSERT OR IGNORE INTO test_collaborators (test_id, user_email, role) VALUES (?, ?, ?)",
+                (test_id, email, role),
+            )
+
+    # Import questions
+    for q in questions_data:
+        q_cursor = conn.execute(
+            "INSERT INTO questions (test_id, question_num, tag, question, options, answer_index, explanation) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (test_id, q.get("id", 0), q.get("tag", ""), q.get("question", ""),
+             json.dumps(q.get("options", []), ensure_ascii=False), q.get("answer_index", 0), q.get("explanation", "")),
+        )
+        # Import material references
+        for ref in q.get("material_refs", []):
+            new_mid = mat_id_map.get(ref.get("material_id"))
+            if new_mid:
+                conn.execute(
+                    "INSERT INTO question_materials (question_id, material_id, context) VALUES (?, ?, ?)",
+                    (q_cursor.lastrowid, new_mid, ref.get("context", "")),
+                )
+
+    # Populate test_tags from imported questions
+    conn.execute("""
+        INSERT OR IGNORE INTO test_tags (test_id, tag)
+        SELECT DISTINCT test_id, tag FROM questions WHERE test_id = ? AND tag != ''
+    """, (test_id,))
+
+    conn.commit()
+    conn.close()
+    return test_id, title
 
 
 # --- Test CRUD ---
@@ -340,6 +445,22 @@ def update_test(test_id, title, description="", author="", language="", visibili
 
 def delete_test(test_id):
     conn = get_connection()
+    # Look up source_file for legacy cleanup
+    row = conn.execute("SELECT source_file FROM tests WHERE id = ?", (test_id,)).fetchone()
+    source_file = row[0] if row and row[0] else None
+
+    # Delete question_history by test_id AND by session_id (for old records with NULL test_id)
+    conn.execute("DELETE FROM question_history WHERE test_id = ?", (test_id,))
+    conn.execute("DELETE FROM question_history WHERE session_id IN (SELECT id FROM test_sessions WHERE test_id = ?)", (test_id,))
+    if source_file:
+        conn.execute("DELETE FROM question_history WHERE test_file = ? AND test_id IS NULL", (source_file,))
+    conn.execute("DELETE FROM test_sessions WHERE test_id = ?", (test_id,))
+    if source_file:
+        conn.execute("DELETE FROM test_sessions WHERE test_file = ? AND test_id IS NULL", (source_file,))
+    conn.execute("DELETE FROM favorite_tests WHERE test_id = ?", (test_id,))
+    if source_file:
+        conn.execute("DELETE FROM favorite_tests WHERE test_file = ? AND test_id IS NULL", (source_file,))
+    # Now delete the test (CASCADE will handle questions, materials, collaborators, program_tests)
     conn.execute("DELETE FROM tests WHERE id = ?", (test_id,))
     conn.commit()
     conn.close()
@@ -440,6 +561,9 @@ def add_question(test_id, question_num, tag, question, options, answer_index, ex
         (test_id, question_num, tag, question, json.dumps(options, ensure_ascii=False), answer_index, explanation, source),
     )
     q_id = cursor.lastrowid
+    # Auto-ensure the tag exists in test_tags
+    if tag and tag.strip():
+        conn.execute("INSERT OR IGNORE INTO test_tags (test_id, tag) VALUES (?, ?)", (test_id, tag))
     conn.execute("UPDATE tests SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (test_id,))
     conn.commit()
     conn.close()
@@ -462,6 +586,11 @@ def update_question(db_id, tag, question, options, answer_index, explanation="")
         "UPDATE questions SET tag = ?, question = ?, options = ?, answer_index = ?, explanation = ? WHERE id = ?",
         (tag, question, json.dumps(options, ensure_ascii=False), answer_index, explanation, db_id),
     )
+    # Auto-ensure the tag exists in test_tags
+    if tag and tag.strip():
+        test_row = conn.execute("SELECT test_id FROM questions WHERE id = ?", (db_id,)).fetchone()
+        if test_row:
+            conn.execute("INSERT OR IGNORE INTO test_tags (test_id, tag) VALUES (?, ?)", (test_row[0], tag))
     # Update test timestamp
     conn.execute(
         "UPDATE tests SET updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT test_id FROM questions WHERE id = ?)",
@@ -479,18 +608,41 @@ def delete_question(db_id):
 
 
 def get_test_tags(test_id):
-    """Get unique tags for a test."""
+    """Get tags for a test from the test_tags table."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT DISTINCT tag FROM questions WHERE test_id = ? ORDER BY tag",
+        "SELECT tag FROM test_tags WHERE test_id = ? ORDER BY tag",
         (test_id,),
     ).fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    return [r[0] for r in rows if r[0]]
+
+
+def add_test_tag(test_id, tag):
+    """Add a tag to a test. Does nothing if the tag already exists."""
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR IGNORE INTO test_tags (test_id, tag) VALUES (?, ?)",
+        (test_id, tag),
+    )
+    conn.commit()
+    conn.close()
 
 
 def rename_test_tag(test_id, old_tag, new_tag):
     conn = get_connection()
+    # Check if new_tag already exists
+    existing = conn.execute(
+        "SELECT id FROM test_tags WHERE test_id = ? AND tag = ?",
+        (test_id, new_tag),
+    ).fetchone()
+    if existing:
+        # Merge: delete the old tag entry
+        conn.execute("DELETE FROM test_tags WHERE test_id = ? AND tag = ?", (test_id, old_tag))
+    else:
+        # Rename the tag entry
+        conn.execute("UPDATE test_tags SET tag = ? WHERE test_id = ? AND tag = ?", (new_tag, test_id, old_tag))
+    # Update questions to use the new tag
     conn.execute(
         "UPDATE questions SET tag = ? WHERE test_id = ? AND tag = ?",
         (new_tag, test_id, old_tag),
@@ -506,6 +658,8 @@ def delete_test_tag(test_id, tag, delete_questions=False):
         conn.execute("DELETE FROM questions WHERE test_id = ? AND tag = ?", (test_id, tag))
     else:
         conn.execute("UPDATE questions SET tag = '' WHERE test_id = ? AND tag = ?", (test_id, tag))
+    # Remove from test_tags table
+    conn.execute("DELETE FROM test_tags WHERE test_id = ? AND tag = ?", (test_id, tag))
     conn.execute("UPDATE tests SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (test_id,))
     conn.commit()
     conn.close()
@@ -525,6 +679,23 @@ def get_test_materials(test_id):
          "pause_times": r[6] or "", "questions_per_pause": r[7] or 1, "transcript": r[8] or ""}
         for r in rows
     ]
+
+
+def get_material_by_id(material_id):
+    """Get a single material by its ID, including the test_id it belongs to."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, test_id, material_type, title, url, file_data, created_at, pause_times, questions_per_pause, transcript FROM test_materials WHERE id = ?",
+        (material_id,),
+    ).fetchone()
+    conn.close()
+    if row:
+        return {
+            "id": row[0], "test_id": row[1], "material_type": row[2], "title": row[3],
+            "url": row[4], "file_data": row[5], "created_at": row[6],
+            "pause_times": row[7] or "", "questions_per_pause": row[8] or 1, "transcript": row[9] or ""
+        }
+    return None
 
 
 def add_test_material(test_id, material_type, title, url="", file_data=None, pause_times="", questions_per_pause=1, transcript=""):
@@ -559,6 +730,13 @@ def delete_test_material(material_id):
 def update_material_transcript(material_id, transcript):
     conn = get_connection()
     conn.execute("UPDATE test_materials SET transcript = ? WHERE id = ?", (transcript, material_id))
+    conn.commit()
+    conn.close()
+
+
+def update_material_pause_times(material_id, pause_times):
+    conn = get_connection()
+    conn.execute("UPDATE test_materials SET pause_times = ? WHERE id = ?", (pause_times, material_id))
     conn.commit()
     conn.close()
 
@@ -731,14 +909,14 @@ def get_program_questions(program_id):
 def get_program_tags(program_id):
     conn = get_connection()
     rows = conn.execute(
-        """SELECT DISTINCT q.tag FROM questions q
-           JOIN program_tests pt ON pt.test_id = q.test_id
+        """SELECT DISTINCT tt.tag FROM test_tags tt
+           JOIN program_tests pt ON pt.test_id = tt.test_id
            WHERE pt.program_id = ?
-           ORDER BY q.tag""",
+           ORDER BY tt.tag""",
         (program_id,),
     ).fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    return [r[0] for r in rows if r[0]]
 
 
 # --- User auth ---
@@ -945,6 +1123,57 @@ def update_user_profile(user_id, display_name=None, avatar_bytes=None):
         )
     conn.commit()
     conn.close()
+
+
+# --- Global User Roles ---
+
+def get_user_global_role(user_id):
+    """Get the global role for a user. Returns 'free', 'premium', or 'admin'."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT global_role FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    if row and row[0]:
+        return row[0]
+    return "free"
+
+
+def set_user_global_role(user_id, role):
+    """Set the global role for a user. Role must be 'student', 'free', 'premium', or 'admin'."""
+    if role not in ("student", "free", "premium", "admin"):
+        raise ValueError(f"Invalid role: {role}")
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET global_role = ? WHERE id = ?",
+        (role, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_user_global_role_by_email(email, role):
+    """Set the global role for a user by email. Role must be 'student', 'free', 'premium', or 'admin'."""
+    if role not in ("student", "free", "premium", "admin"):
+        raise ValueError(f"Invalid role: {role}")
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET global_role = ? WHERE username = ?",
+        (role, email),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_users_with_roles():
+    """Get all users with their roles (for admin panel)."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, username, display_name, global_role FROM users ORDER BY username"
+    ).fetchall()
+    conn.close()
+    return [{"id": r[0], "email": r[1], "display_name": r[2], "global_role": r[3] or "free"} for r in rows]
 
 
 # --- Favorites ---
