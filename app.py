@@ -1760,7 +1760,15 @@ def show_home_page():
 
     # Video section
     st.subheader(f"🎬 {t('home_video_title')}")
-    st.video("https://www.youtube.com/watch?v=E2DEHOEbzks")
+    # Different videos for each language
+    home_videos = {
+        "es": "https://youtu.be/8KRWO8JdyPI",
+        "en": "https://youtu.be/kSYJ9CeXnO8",
+        "fr": "https://youtu.be/XgYThH36kGM",
+        "ca": "https://youtu.be/o71o6B3l9Qg",
+    }
+    current_lang = st.session_state.get("lang", "es")
+    st.video(home_videos.get(current_lang, home_videos["es"]))
 
     st.divider()
 
@@ -1836,14 +1844,21 @@ def show_home_page():
                 st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knowter_login", use_container_width=True)
             elif is_knower:
                 # Check if user already has a pending request
-                status = get_user_survey_status(st.session_state.get("user_id"))
-                if status and status.get("pending_approval"):
-                    st.info(t("pending_admin_review"))
-                else:
+                #status = get_user_survey_status(st.session_state.get("user_id"))
+                #if status and status.get("pending_approval"):
+                #    st.info(t("pending_admin_review"))
+                #else:
                     # Show "Become Knowter" button for knowers who want to upgrade
-                    if st.button(t("become_knowter"), key="become_knowter_btn", use_container_width=True):
-                        st.session_state.page = "Choose Access Type"
-                        st.rerun()
+                #    if st.button(t("become_knowter"), key="become_knowter_btn", use_container_width=True):
+                #        st.session_state.page = "Choose Access Type"
+                #        st.rerun()
+                # Knowter plan coming soon - button disabled
+                st.button(
+                    f"{t('become_knowter')} ({t('paid_plan_coming_soon')})",
+                    key="become_knowter_btn",
+                    use_container_width=True,
+                    disabled=True
+                )
 
 
 def show_privacy_policy():

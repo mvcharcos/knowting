@@ -451,7 +451,7 @@ TRANSLATIONS = {
     "home_current_plan": {"es": "Tu plan actual", "en": "Your current plan", "fr": "Votre plan actuel", "ca": "El teu pla actual"},
     # Home page plan descriptions - updated
     "home_plan_knower_access": {"es": "Acceso gratuito al registrarte", "en": "Free access by registering", "fr": "Accès gratuit en s'inscrivant", "ca": "Accés gratuït en registrar-te"},
-    "home_plan_knowter_access": {"es": "Acceso completando encuestas", "en": "Access by completing surveys", "fr": "Accès en complétant les sondages", "ca": "Accés completant enquestes"},
+    "home_plan_knowter_access": {"es": "Acceso por encuestas o plan de pago", "en": "Access by surveys or paid plan", "fr": "Accès par sondages ou plan payant", "ca": "Accés per enquestes o pla de pagament"},
     "home_feature_periodic_survey": {"es": "Encuesta periódica requerida", "en": "Periodic survey required", "fr": "Sondage périodique requis", "ca": "Enquesta periòdica requerida"},
     "become_knowter": {"es": "Ser Knowter", "en": "Become Knowter", "fr": "Devenir Knowter", "ca": "Ser Knowter"},
     "take_initial_survey": {"es": "Completar encuesta inicial", "en": "Take initial survey", "fr": "Remplir le sondage initial", "ca": "Completar enquesta inicial"},
