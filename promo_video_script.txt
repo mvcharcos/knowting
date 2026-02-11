@@ -1,0 +1,200 @@
+================================================================================
+                    KNOWTING - PROMOTIONAL VIDEO SCRIPT
+================================================================================
+
+Duration: Approximately 3-4 minutes
+Target Audience: Students, educators, and lifelong learners
+
+--------------------------------------------------------------------------------
+SCENE 1: HOOK (0:00 - 0:15)
+--------------------------------------------------------------------------------
+
+[Visual: Person struggling with scattered notes and textbooks]
+
+NARRATOR:
+"Tired of ineffective study methods? Struggling to track your learning progress?
+There's a better way to master any subject."
+
+[Visual: Transition to clean Knowting interface]
+
+"Introducing Knowting — your personal learning companion."
+
+--------------------------------------------------------------------------------
+SCENE 2: WHAT IS KNOWTING? (0:15 - 0:45)
+--------------------------------------------------------------------------------
+
+[Visual: Overview of the Knowting home page]
+
+NARRATOR:
+"Knowting is a powerful web platform designed for creating, sharing, and taking
+educational tests. Whether you're a student preparing for exams, a teacher
+building assessments, or a professional staying sharp — Knowting adapts to
+your needs."
+
+[Visual: Show test creation interface]
+
+"Create custom tests with multiple-choice questions, add explanations for each
+answer, and organize everything by topics. Learning has never been this
+structured."
+
+--------------------------------------------------------------------------------
+SCENE 3: KEY FEATURES (0:45 - 2:00)
+--------------------------------------------------------------------------------
+
+[Visual: Creating a test]
+
+NARRATOR:
+"Let's explore what makes Knowting special."
+
+--- Feature 1: Easy Test Creation ---
+
+"Creating a test is simple. Add a title, write your questions, define the
+correct answers, and include helpful explanations. Your students will
+understand not just WHAT the answer is, but WHY."
+
+[Visual: Adding study materials - videos, PDFs, images]
+
+--- Feature 2: Rich Study Materials ---
+
+"Enhance your tests with study materials. Upload videos, PDFs, and images
+directly to your tests. Everything your learners need, all in one place."
+
+[Visual: Collaboration interface - inviting users]
+
+--- Feature 3: Seamless Collaboration ---
+
+"Learning is better together. Invite collaborators with different roles:
+- Students can take tests
+- Guests can view content and practice
+- Reviewers can help edit questions
+- Administrators can manage everything
+
+Share knowledge, build together, grow together."
+
+[Visual: Statistics and progress charts]
+
+--- Feature 4: Track Your Progress ---
+
+"See your improvement over time. Knowting tracks every answer, calculates
+your statistics by topic, and shows you exactly where to focus your efforts.
+No more guessing — just data-driven learning."
+
+[Visual: Courses/Programs overview]
+
+--- Feature 5: Organize with Courses ---
+
+"Group related tests into courses. Perfect for structured learning paths,
+exam preparation, or complete curricula. Your content, beautifully organized."
+
+--------------------------------------------------------------------------------
+SCENE 4: USER PLANS (2:00 - 2:30)
+--------------------------------------------------------------------------------
+
+[Visual: Show the three plan columns from the home page]
+
+NARRATOR:
+"Knowting offers flexible access for everyone."
+
+[Visual: Highlight Visitor section]
+
+"As a visitor, explore public tests and discover what's possible."
+
+[Visual: Highlight Knower section]
+
+"Register for free as a Knower. Create unlimited tests, upload materials,
+track your progress, and collaborate with others."
+
+[Visual: Highlight Knowter section]
+
+"Become a Knowter to unlock premium features like creating courses,
+advanced visibility controls, and exclusive content access."
+
+--------------------------------------------------------------------------------
+SCENE 5: HOW TO GET STARTED (2:30 - 3:00)
+--------------------------------------------------------------------------------
+
+[Visual: Google Sign-In button]
+
+NARRATOR:
+"Getting started takes seconds. Sign in with your Google account — no lengthy
+registration forms, no passwords to remember."
+
+[Visual: Quick walkthrough - creating first test]
+
+"Create your first test in minutes. Add questions, set visibility options,
+and share with your study group instantly."
+
+[Visual: Taking a test on mobile/tablet]
+
+"Access your tests anywhere, anytime. Knowting works on any device with a
+web browser."
+
+--------------------------------------------------------------------------------
+SCENE 6: CALL TO ACTION (3:20 - 3:45)
+--------------------------------------------------------------------------------
+
+[Visual: Knowting logo with sign-up prompt]
+
+NARRATOR:
+"Ready to transform how you learn?"
+
+[Visual: Happy students/professionals using the platform]
+
+"Join thousands of learners who've discovered the power of structured,
+trackable, collaborative learning."
+
+[Visual: Website URL and sign-up button]
+
+"Visit Knowting today. Sign up for free. Start learning smarter."
+
+[Visual: Knowting logo animation]
+
+"Knowting — Know more. Test better. Learn smarter."
+
+================================================================================
+                           END OF SCRIPT
+================================================================================
+
+--------------------------------------------------------------------------------
+PRODUCTION NOTES
+--------------------------------------------------------------------------------
+
+MUSIC SUGGESTIONS:
+- Upbeat, inspiring background music
+- Softer during feature explanations
+- Build to crescendo for call to action
+
+VISUAL STYLE:
+- Clean, modern interface shots
+- Smooth transitions between scenes
+- Highlight UI elements with subtle animations
+- Use screen recordings with mouse pointer visible
+
+VOICE-OVER TONE:
+- Friendly and professional
+- Enthusiastic but not overwhelming
+- Clear pronunciation, moderate pace
+
+LANGUAGES:
+This script can be adapted for:
+- Spanish (ES)
+- French (FR)
+- Catalan (CA)
+- English (EN)
+
+--------------------------------------------------------------------------------
+ALTERNATIVE SHORT VERSION (60 seconds)
+--------------------------------------------------------------------------------
+
+"Studying shouldn't be a struggle. Meet Knowting — your all-in-one platform
+for creating and taking educational tests.
+
+Create custom tests with explanations. Add videos, PDFs, and images.
+Collaborate with classmates. Track your progress with detailed statistics.
+
+Sign in with Google, create your first test in minutes, and start learning
+smarter today.
+
+Knowting — Know more. Test better. Learn smarter."
+
+================================================================================

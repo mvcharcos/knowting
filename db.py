@@ -138,7 +138,72 @@ def init_db():
             FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE,
             UNIQUE(test_id, tag)
         );
+        CREATE TABLE IF NOT EXISTS surveys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            survey_type TEXT NOT NULL CHECK(survey_type IN ('initial', 'periodic', 'feedback')),
+            is_active BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            valid_from TIMESTAMP,
+            valid_until TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS survey_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_id INTEGER NOT NULL,
+            question_num INTEGER NOT NULL,
+            question_type TEXT NOT NULL CHECK(question_type IN ('multiple_choice', 'text', 'rating', 'checkbox')),
+            question_text TEXT NOT NULL,
+            options TEXT DEFAULT '[]',
+            required BOOLEAN DEFAULT 1,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS survey_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (survey_id) REFERENCES surveys(id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(survey_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS survey_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            response_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            answer_text TEXT DEFAULT '',
+            answer_options TEXT DEFAULT '[]',
+            FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE,
+            FOREIGN KEY (question_id) REFERENCES survey_questions(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS user_survey_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            knowter_access_type TEXT CHECK(knowter_access_type IN ('survey', 'paid', 'granted')),
+            initial_survey_completed BOOLEAN DEFAULT 0,
+            pending_approval BOOLEAN DEFAULT 0,
+            last_periodic_survey_id INTEGER,
+            last_periodic_survey_date TIMESTAMP,
+            survey_deadline TIMESTAMP,
+            access_on_hold BOOLEAN DEFAULT 0,
+            access_revoked BOOLEAN DEFAULT 0,
+            revoked_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
     """)
+    # Migration: add access_on_hold column if it doesn't exist
+    cursor = conn.execute("PRAGMA table_info(user_survey_status)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "access_on_hold" not in columns:
+        conn.execute("ALTER TABLE user_survey_status ADD COLUMN access_on_hold BOOLEAN DEFAULT 0")
+        conn.commit()
+    # Migration: rename monthly columns to periodic
+    cursor = conn.execute("PRAGMA table_info(user_survey_status)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "last_monthly_survey_id" in columns:
+        conn.execute("ALTER TABLE user_survey_status RENAME COLUMN last_monthly_survey_id TO last_periodic_survey_id")
+        conn.execute("ALTER TABLE user_survey_status RENAME COLUMN last_monthly_survey_date TO last_periodic_survey_date")
+        conn.commit()
     # Migrations for older DB versions
     cursor = conn.execute("PRAGMA table_info(question_history)")
     columns = [row[1] for row in cursor.fetchall()]
@@ -155,11 +220,14 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN avatar BLOB")
         conn.commit()
     if "global_role" not in columns:
-        conn.execute("ALTER TABLE users ADD COLUMN global_role TEXT DEFAULT 'free'")
+        conn.execute("ALTER TABLE users ADD COLUMN global_role TEXT DEFAULT 'knower'")
         conn.commit()
 
-    # Migrate any existing 'student' global roles to 'free' (student role removed from global roles)
-    conn.execute("UPDATE users SET global_role = 'free' WHERE global_role = 'student'")
+    # Migrate any existing 'student' global roles to 'knower' (student role removed from global roles)
+    conn.execute("UPDATE users SET global_role = 'knower' WHERE global_role = 'student'")
+    # Migrate old role names: 'free' -> 'knower', 'premium' -> 'knowter'
+    conn.execute("UPDATE users SET global_role = 'knower' WHERE global_role = 'free'")
+    conn.execute("UPDATE users SET global_role = 'knowter' WHERE global_role = 'premium'")
     conn.commit()
 
     # Add pause_times and questions_per_pause to test_materials
@@ -1061,6 +1129,17 @@ def authenticate(username, password):
     return None
 
 
+def user_exists(email):
+    """Check if a user with the given email already exists."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (email,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def get_or_create_google_user(email, name):
     """Get or create a user account for Google OAuth login."""
     conn = get_connection()
@@ -1438,10 +1517,85 @@ def update_user_profile(user_id, display_name=None, avatar_bytes=None):
     conn.close()
 
 
+def delete_user_account(user_id):
+    """Delete a user account and all associated data.
+
+    This removes:
+    - User's question history and test sessions
+    - User's collaborator entries (tests and programs)
+    - User's favorite tests
+    - Tests owned by the user (and their questions, materials, collaborators)
+    - Programs owned by the user (and their collaborators, test links)
+    - The user record itself
+    """
+    conn = get_connection()
+
+    # Get user's email for cleaning up email-based collaborator entries
+    row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+    user_email = row[0] if row else None
+
+    # Delete question history
+    conn.execute("DELETE FROM question_history WHERE user_id = ?", (user_id,))
+
+    # Delete test sessions
+    conn.execute("DELETE FROM test_sessions WHERE user_id = ?", (user_id,))
+
+    # Delete favorite tests
+    conn.execute("DELETE FROM favorite_tests WHERE user_id = ?", (user_id,))
+
+    # Delete test collaborator entries (where user is invited)
+    conn.execute("DELETE FROM test_collaborators WHERE user_id = ?", (user_id,))
+    if user_email:
+        conn.execute("DELETE FROM test_collaborators WHERE user_email = ?", (user_email,))
+
+    # Delete program collaborator entries (where user is invited)
+    conn.execute("DELETE FROM program_collaborators WHERE user_id = ?", (user_id,))
+    if user_email:
+        conn.execute("DELETE FROM program_collaborators WHERE user_email = ?", (user_email,))
+
+    # Get tests owned by user
+    test_ids = [row[0] for row in conn.execute(
+        "SELECT id FROM tests WHERE owner_id = ?", (user_id,)
+    ).fetchall()]
+
+    # Delete data for owned tests
+    for test_id in test_ids:
+        conn.execute("DELETE FROM questions WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM test_materials WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM test_collaborators WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM question_material_links WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM program_tests WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM favorite_tests WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM question_history WHERE test_id = ?", (test_id,))
+        conn.execute("DELETE FROM test_sessions WHERE test_id = ?", (test_id,))
+
+    # Delete owned tests
+    conn.execute("DELETE FROM tests WHERE owner_id = ?", (user_id,))
+
+    # Get programs owned by user
+    program_ids = [row[0] for row in conn.execute(
+        "SELECT id FROM programs WHERE owner_id = ?", (user_id,)
+    ).fetchall()]
+
+    # Delete data for owned programs
+    for program_id in program_ids:
+        conn.execute("DELETE FROM program_tests WHERE program_id = ?", (program_id,))
+        conn.execute("DELETE FROM program_collaborators WHERE program_id = ?", (program_id,))
+
+    # Delete owned programs
+    conn.execute("DELETE FROM programs WHERE owner_id = ?", (user_id,))
+
+    # Delete the user record
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    conn.commit()
+    conn.close()
+
+
 # --- Global User Roles ---
 
 def get_user_global_role(user_id):
-    """Get the global role for a user. Returns 'free', 'premium', or 'admin'."""
+    """Get the global role for a user. Returns 'knower', 'knowter', or 'admin'."""
     conn = get_connection()
     row = conn.execute(
         "SELECT global_role FROM users WHERE id = ?",
@@ -1450,12 +1604,12 @@ def get_user_global_role(user_id):
     conn.close()
     if row and row[0]:
         return row[0]
-    return "free"
+    return "knower"
 
 
 def set_user_global_role(user_id, role):
-    """Set the global role for a user. Role must be 'free', 'premium', or 'admin'."""
-    if role not in ("free", "premium", "admin"):
+    """Set the global role for a user. Role must be 'knower', 'knowter', or 'admin'."""
+    if role not in ("knower", "knowter", "admin"):
         raise ValueError(f"Invalid role: {role}")
     conn = get_connection()
     conn.execute(
@@ -1467,8 +1621,8 @@ def set_user_global_role(user_id, role):
 
 
 def set_user_global_role_by_email(email, role):
-    """Set the global role for a user by email. Role must be 'free', 'premium', or 'admin'."""
-    if role not in ("free", "premium", "admin"):
+    """Set the global role for a user by email. Role must be 'knower', 'knowter', or 'admin'."""
+    if role not in ("knower", "knowter", "admin"):
         raise ValueError(f"Invalid role: {role}")
     conn = get_connection()
     conn.execute(
@@ -1486,7 +1640,7 @@ def get_all_users_with_roles():
         "SELECT id, username, display_name, global_role FROM users ORDER BY username"
     ).fetchall()
     conn.close()
-    return [{"id": r[0], "email": r[1], "display_name": r[2], "global_role": r[3] or "free"} for r in rows]
+    return [{"id": r[0], "email": r[1], "display_name": r[2], "global_role": r[3] or "knower"} for r in rows]
 
 
 # --- Favorites ---
@@ -1931,3 +2085,509 @@ def get_favorite_tests(user_id):
     ).fetchall()
     conn.close()
     return {r[0] for r in rows}
+
+
+# --- Surveys ---
+
+def create_survey(title, description="", survey_type="periodic", valid_from=None, valid_until=None):
+    """Create a new survey. Returns survey_id."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO surveys (title, description, survey_type, valid_from, valid_until)
+           VALUES (?, ?, ?, ?, ?)""",
+        (title, description, survey_type, valid_from, valid_until),
+    )
+    survey_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return survey_id
+
+
+def update_survey(survey_id, title, description="", valid_from=None, valid_until=None):
+    """Update survey details."""
+    conn = get_connection()
+    conn.execute(
+        """UPDATE surveys SET title = ?, description = ?, valid_from = ?, valid_until = ?
+           WHERE id = ?""",
+        (title, description, valid_from, valid_until, survey_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_survey(survey_id):
+    """Delete a survey and all related data."""
+    conn = get_connection()
+    conn.execute("DELETE FROM surveys WHERE id = ?", (survey_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_survey(survey_id):
+    """Get survey by ID."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT id, title, description, survey_type, is_active, created_at,
+                  valid_from, valid_until FROM surveys WHERE id = ?""",
+        (survey_id,),
+    ).fetchone()
+    conn.close()
+    if row:
+        return {
+            "id": row[0], "title": row[1], "description": row[2],
+            "survey_type": row[3], "is_active": bool(row[4]), "created_at": row[5],
+            "valid_from": row[6], "valid_until": row[7]
+        }
+    return None
+
+
+def get_all_surveys():
+    """Get all surveys."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT id, title, description, survey_type, is_active, created_at,
+                  valid_from, valid_until,
+                  (SELECT COUNT(*) FROM survey_questions WHERE survey_id = surveys.id) as q_count,
+                  (SELECT COUNT(*) FROM survey_responses WHERE survey_id = surveys.id) as response_count
+           FROM surveys ORDER BY created_at DESC"""
+    ).fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "title": r[1], "description": r[2], "survey_type": r[3],
+         "is_active": bool(r[4]), "created_at": r[5], "valid_from": r[6], "valid_until": r[7],
+         "question_count": r[8], "response_count": r[9]}
+        for r in rows
+    ]
+
+
+def set_active_survey(survey_id, survey_type):
+    """Set a survey as the active survey for its type, deactivating others of the same type."""
+    conn = get_connection()
+    conn.execute("UPDATE surveys SET is_active = 0 WHERE survey_type = ?", (survey_type,))
+    conn.execute("UPDATE surveys SET is_active = 1 WHERE id = ?", (survey_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_active_periodic_survey():
+    """Get the currently active periodic survey."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT id, title, description, survey_type, is_active, created_at,
+                  valid_from, valid_until FROM surveys
+           WHERE survey_type = 'periodic' AND is_active = 1"""
+    ).fetchone()
+    conn.close()
+    if row:
+        return {
+            "id": row[0], "title": row[1], "description": row[2],
+            "survey_type": row[3], "is_active": bool(row[4]), "created_at": row[5],
+            "valid_from": row[6], "valid_until": row[7]
+        }
+    return None
+
+
+def get_active_initial_survey():
+    """Get the active initial survey for new survey-based knowters."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT id, title, description, survey_type, is_active, created_at,
+                  valid_from, valid_until FROM surveys
+           WHERE survey_type = 'initial' AND is_active = 1"""
+    ).fetchone()
+    conn.close()
+    if row:
+        return {
+            "id": row[0], "title": row[1], "description": row[2],
+            "survey_type": row[3], "is_active": bool(row[4]), "created_at": row[5],
+            "valid_from": row[6], "valid_until": row[7]
+        }
+    return None
+
+
+# --- Survey Questions ---
+
+def add_survey_question(survey_id, question_num, question_type, question_text, options=None, required=True):
+    """Add a question to a survey."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO survey_questions (survey_id, question_num, question_type, question_text, options, required)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (survey_id, question_num, question_type, question_text,
+         json.dumps(options or [], ensure_ascii=False), required),
+    )
+    q_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return q_id
+
+
+def update_survey_question(question_id, question_type, question_text, options=None, required=True):
+    """Update a survey question."""
+    conn = get_connection()
+    conn.execute(
+        """UPDATE survey_questions SET question_type = ?, question_text = ?, options = ?, required = ?
+           WHERE id = ?""",
+        (question_type, question_text, json.dumps(options or [], ensure_ascii=False), required, question_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_survey_question(question_id):
+    """Delete a survey question."""
+    conn = get_connection()
+    conn.execute("DELETE FROM survey_questions WHERE id = ?", (question_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_survey_questions(survey_id):
+    """Get all questions for a survey."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT id, question_num, question_type, question_text, options, required
+           FROM survey_questions WHERE survey_id = ? ORDER BY question_num""",
+        (survey_id,),
+    ).fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "question_num": r[1], "question_type": r[2], "question_text": r[3],
+         "options": json.loads(r[4]) if r[4] else [], "required": bool(r[5])}
+        for r in rows
+    ]
+
+
+def get_next_survey_question_num(survey_id):
+    """Get next question number for a survey."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COALESCE(MAX(question_num), 0) + 1 FROM survey_questions WHERE survey_id = ?",
+        (survey_id,),
+    ).fetchone()
+    conn.close()
+    return row[0]
+
+
+# --- Survey Responses ---
+
+def submit_survey_response(survey_id, user_id, answers):
+    """Submit a complete survey response. answers = [{question_id, answer_text, answer_options}]"""
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO survey_responses (survey_id, user_id) VALUES (?, ?)",
+        (survey_id, user_id),
+    )
+    response_id = cursor.lastrowid
+    for ans in answers:
+        conn.execute(
+            """INSERT INTO survey_answers (response_id, question_id, answer_text, answer_options)
+               VALUES (?, ?, ?, ?)""",
+            (response_id, ans["question_id"], ans.get("answer_text", ""),
+             json.dumps(ans.get("answer_options", []), ensure_ascii=False)),
+        )
+    conn.commit()
+    conn.close()
+    return response_id
+
+
+def has_completed_survey(user_id, survey_id):
+    """Check if user has completed a specific survey."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id FROM survey_responses WHERE user_id = ? AND survey_id = ?",
+        (user_id, survey_id),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def get_survey_response_count(survey_id):
+    """Get number of responses for a survey."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM survey_responses WHERE survey_id = ?",
+        (survey_id,),
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def get_survey_responses(survey_id):
+    """Get all responses for a survey with user info."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT sr.id, sr.user_id, sr.completed_at, u.username, u.display_name
+           FROM survey_responses sr
+           JOIN users u ON u.id = sr.user_id
+           WHERE sr.survey_id = ?
+           ORDER BY sr.completed_at DESC""",
+        (survey_id,),
+    ).fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "user_id": r[1], "completed_at": r[2],
+         "email": r[3], "display_name": r[4] or r[3]}
+        for r in rows
+    ]
+
+
+def get_survey_response_answers(response_id):
+    """Get all answers for a specific survey response."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT sa.id, sa.question_id, sa.answer_text, sa.answer_options, sq.question_text
+           FROM survey_answers sa
+           JOIN survey_questions sq ON sq.id = sa.question_id
+           WHERE sa.response_id = ?
+           ORDER BY sq.question_num""",
+        (response_id,),
+    ).fetchall()
+    conn.close()
+    return [
+        {"id": r[0], "question_id": r[1], "answer_text": r[2],
+         "answer_options": json.loads(r[3]) if r[3] else [], "question_text": r[4]}
+        for r in rows
+    ]
+
+
+def get_survey_answer_statistics(survey_id):
+    """Get answer statistics for each question in a survey."""
+    conn = get_connection()
+    questions = get_survey_questions(survey_id)
+    stats = {}
+    for q in questions:
+        if q["question_type"] in ("multiple_choice", "rating"):
+            rows = conn.execute(
+                """SELECT sa.answer_text, COUNT(*) as cnt
+                   FROM survey_answers sa
+                   JOIN survey_responses sr ON sr.id = sa.response_id
+                   WHERE sr.survey_id = ? AND sa.question_id = ?
+                   GROUP BY sa.answer_text""",
+                (survey_id, q["id"]),
+            ).fetchall()
+            stats[q["id"]] = {"counts": {r[0]: r[1] for r in rows}, "question": q}
+        elif q["question_type"] == "checkbox":
+            rows = conn.execute(
+                """SELECT sa.answer_options
+                   FROM survey_answers sa
+                   JOIN survey_responses sr ON sr.id = sa.response_id
+                   WHERE sr.survey_id = ? AND sa.question_id = ?""",
+                (survey_id, q["id"]),
+            ).fetchall()
+            option_counts = {}
+            for r in rows:
+                opts = json.loads(r[0]) if r[0] else []
+                for opt in opts:
+                    option_counts[opt] = option_counts.get(opt, 0) + 1
+            stats[q["id"]] = {"counts": option_counts, "question": q}
+        else:  # text
+            rows = conn.execute(
+                """SELECT sa.answer_text
+                   FROM survey_answers sa
+                   JOIN survey_responses sr ON sr.id = sa.response_id
+                   WHERE sr.survey_id = ? AND sa.question_id = ?""",
+                (survey_id, q["id"]),
+            ).fetchall()
+            stats[q["id"]] = {"text_responses": [r[0] for r in rows if r[0]], "question": q}
+    conn.close()
+    return stats
+
+
+# --- User Survey Status ---
+
+def get_user_survey_status(user_id):
+    """Get survey status for a user."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT id, knowter_access_type, initial_survey_completed, last_periodic_survey_id,
+                  last_periodic_survey_date, survey_deadline, access_revoked, revoked_at, pending_approval,
+                  access_on_hold
+           FROM user_survey_status WHERE user_id = ?""",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    if row:
+        return {
+            "id": row[0], "knowter_access_type": row[1],
+            "initial_survey_completed": bool(row[2]),
+            "last_periodic_survey_id": row[3], "last_periodic_survey_date": row[4],
+            "survey_deadline": row[5], "access_revoked": bool(row[6]), "revoked_at": row[7],
+            "pending_approval": bool(row[8]), "access_on_hold": bool(row[9]) if row[9] is not None else False
+        }
+    return None
+
+
+def create_user_survey_status(user_id, knowter_access_type, initial_completed=False, pending_approval=False):
+    """Create user survey status record."""
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO user_survey_status
+           (user_id, knowter_access_type, initial_survey_completed, pending_approval)
+           VALUES (?, ?, ?, ?)""",
+        (user_id, knowter_access_type, initial_completed, pending_approval),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_user_survey_status(user_id, initial_completed=None, pending_approval=None,
+                               last_survey_id=None, deadline=None, access_revoked=None,
+                               access_on_hold=None):
+    """Update user survey status."""
+    conn = get_connection()
+    updates = []
+    params = []
+    if initial_completed is not None:
+        updates.append("initial_survey_completed = ?")
+        params.append(initial_completed)
+    if pending_approval is not None:
+        updates.append("pending_approval = ?")
+        params.append(pending_approval)
+    if last_survey_id is not None:
+        updates.append("last_periodic_survey_id = ?")
+        params.append(last_survey_id)
+        updates.append("last_periodic_survey_date = CURRENT_TIMESTAMP")
+    if deadline is not None:
+        updates.append("survey_deadline = ?")
+        params.append(deadline)
+    if access_on_hold is not None:
+        updates.append("access_on_hold = ?")
+        params.append(access_on_hold)
+    if access_revoked is not None:
+        updates.append("access_revoked = ?")
+        params.append(access_revoked)
+        if access_revoked:
+            updates.append("revoked_at = CURRENT_TIMESTAMP")
+        else:
+            updates.append("revoked_at = NULL")
+    if updates:
+        params.append(user_id)
+        conn.execute(f"UPDATE user_survey_status SET {', '.join(updates)} WHERE user_id = ?", params)
+        conn.commit()
+    conn.close()
+
+
+def revoke_survey_based_access(user_id):
+    """Revoke knowter access for a survey-based user."""
+    conn = get_connection()
+    conn.execute(
+        """UPDATE user_survey_status SET access_revoked = 1, revoked_at = CURRENT_TIMESTAMP
+           WHERE user_id = ?""",
+        (user_id,),
+    )
+    # Downgrade user role to knower
+    conn.execute("UPDATE users SET global_role = 'knower' WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def put_access_on_hold(user_id):
+    """Put knowter access on hold until survey is completed. Does not revoke access."""
+    conn = get_connection()
+    conn.execute(
+        """UPDATE user_survey_status SET access_on_hold = 1
+           WHERE user_id = ?""",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def release_access_hold(user_id):
+    """Release access hold after survey completion."""
+    from datetime import datetime, timedelta
+    deadline = (datetime.now() + timedelta(days=30)).isoformat()
+    conn = get_connection()
+    conn.execute(
+        """UPDATE user_survey_status SET access_on_hold = 0, survey_deadline = ?
+           WHERE user_id = ?""",
+        (deadline, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def approve_knowter_access(user_id):
+    """Approve a user's knowter access request. User becomes knowter but must complete initial survey."""
+    conn = get_connection()
+    # User becomes knowter but initial_survey_completed remains false
+    # They'll need to complete the survey when accessing knowter features
+    conn.execute(
+        """UPDATE user_survey_status SET pending_approval = 0
+           WHERE user_id = ?""",
+        (user_id,),
+    )
+    conn.execute("UPDATE users SET global_role = 'knowter' WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_users_pending_approval():
+    """Get users who have completed initial survey and are pending admin approval."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT uss.user_id, u.username, u.display_name, uss.last_periodic_survey_date
+           FROM user_survey_status uss
+           JOIN users u ON u.id = uss.user_id
+           WHERE uss.pending_approval = 1 AND uss.access_revoked = 0
+           ORDER BY uss.last_periodic_survey_date DESC"""
+    ).fetchall()
+    conn.close()
+    return [
+        {"user_id": r[0], "email": r[1], "display_name": r[2] or r[1], "survey_date": r[3]}
+        for r in rows
+    ]
+
+
+def get_users_needing_survey():
+    """Get users who need to complete a survey (deadline approaching)."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT uss.user_id, u.username, u.display_name, uss.survey_deadline,
+                  uss.last_periodic_survey_date, uss.knowter_access_type
+           FROM user_survey_status uss
+           JOIN users u ON u.id = uss.user_id
+           WHERE uss.knowter_access_type = 'survey'
+             AND uss.access_revoked = 0
+             AND uss.pending_approval = 0
+             AND u.global_role = 'knowter'
+           ORDER BY uss.survey_deadline"""
+    ).fetchall()
+    conn.close()
+    return [
+        {"user_id": r[0], "email": r[1], "display_name": r[2] or r[1],
+         "deadline": r[3], "last_survey_date": r[4], "access_type": r[5]}
+        for r in rows
+    ]
+
+
+def get_users_with_overdue_surveys():
+    """Get users whose survey deadline has passed."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT uss.user_id, u.username, u.display_name, uss.survey_deadline
+           FROM user_survey_status uss
+           JOIN users u ON u.id = uss.user_id
+           WHERE uss.knowter_access_type = 'survey'
+             AND uss.access_revoked = 0
+             AND uss.pending_approval = 0
+             AND u.global_role = 'knowter'
+             AND uss.survey_deadline < datetime('now')
+           ORDER BY uss.survey_deadline"""
+    ).fetchall()
+    conn.close()
+    return [
+        {"user_id": r[0], "email": r[1], "display_name": r[2] or r[1], "deadline": r[3]}
+        for r in rows
+    ]
+
+
+def get_pending_approval_count():
+    """Get count of users pending approval."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) FROM user_survey_status WHERE pending_approval = 1 AND access_revoked = 0"
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0

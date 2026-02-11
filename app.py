@@ -1,13 +1,14 @@
 import streamlit as st
 import random
 import base64
+import os
 from translations import t
 from db import (
-    init_db, get_or_create_google_user, record_answer, get_question_stats,
+    init_db, user_exists, get_or_create_google_user, record_answer, get_question_stats,
     create_session, update_session_score, get_user_sessions,
     get_session_wrong_answers, get_topic_statistics, get_tests_performance,
     get_user_test_ids, get_user_session_count, get_user_program_ids, get_programs_performance,
-    get_user_profile, update_user_profile,
+    get_user_profile, update_user_profile, delete_user_account,
     get_user_global_role, set_user_global_role, set_user_global_role_by_email, get_all_users_with_roles,
     toggle_favorite, get_favorite_tests,
     get_all_tests, get_test, get_test_questions, get_test_questions_by_ids,
@@ -26,6 +27,14 @@ from db import (
     get_pending_invitations,
     accept_test_invitation, decline_test_invitation,
     accept_program_invitation, decline_program_invitation,
+    # Survey functions
+    create_survey, update_survey, delete_survey, get_survey, get_all_surveys,
+    set_active_survey, get_active_periodic_survey, get_active_initial_survey,
+    add_survey_question, update_survey_question, delete_survey_question, get_survey_questions, get_next_survey_question_num,
+    submit_survey_response, has_completed_survey, get_survey_responses, get_survey_response_answers, get_survey_answer_statistics,
+    get_user_survey_status, create_user_survey_status, update_user_survey_status,
+    revoke_survey_based_access, approve_knowter_access,
+    get_users_pending_approval, get_users_needing_survey, get_users_with_overdue_surveys, get_pending_approval_count,
 )
 
 init_db()
@@ -40,7 +49,11 @@ def _is_logged_in():
 
 
 def _try_login():
-    """Attempt to log in the user silently, supporting both st.user and st.experimental_user."""
+    """Attempt to log in the user silently, supporting both st.user and st.experimental_user.
+
+    For new users (not in database), stores pending registration info and requires
+    terms acceptance before creating the account.
+    """
     if st.session_state.get("user_id"):
         return
 
@@ -52,10 +65,19 @@ def _try_login():
                 email = user_info.email
                 name = getattr(user_info, "name", email) or email
 
-                user_id = get_or_create_google_user(email, name)
-                resolve_collaborator_user_id(email, user_id)
-                st.session_state.user_id = user_id
-                st.session_state.username = name
+                # Check if user already exists
+                if user_exists(email):
+                    # Existing user - log in directly
+                    user_id = get_or_create_google_user(email, name)
+                    resolve_collaborator_user_id(email, user_id)
+                    st.session_state.user_id = user_id
+                    st.session_state.username = name
+                else:
+                    # New user - store pending registration for terms acceptance
+                    st.session_state.pending_registration = {
+                        "email": email,
+                        "name": name,
+                    }
         except Exception as e:
             st.warning(t("auth_not_configured", e=e))
 
@@ -1703,6 +1725,257 @@ def _import_questions_dialog(test_id, materials):
     _dialog()
 
 
+def _get_legal_file_path(doc_type, lang):
+    """Get the path to a legal document file based on type and language."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    filename = f"{doc_type}_{lang}.md"
+    return os.path.join(base_dir, "legal", filename)
+
+
+def _read_legal_document(doc_type):
+    """Read a legal document in the current language, falling back to English."""
+    lang = st.session_state.get("lang", "es")
+    filepath = _get_legal_file_path(doc_type, lang)
+
+    # Try current language first
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read()
+
+    # Fallback to English
+    filepath_en = _get_legal_file_path(doc_type, "en")
+    if os.path.exists(filepath_en):
+        with open(filepath_en, "r", encoding="utf-8") as f:
+            return f.read()
+
+    return ""
+
+
+def show_home_page():
+    """Display the home page with app introduction, video, and plans."""
+    st.header(t("home_welcome"))
+    st.write(t("home_intro"))
+
+    st.divider()
+
+    # Video section
+    st.subheader(f"🎬 {t('home_video_title')}")
+    st.video("https://www.youtube.com/watch?v=E2DEHOEbzks")
+
+    st.divider()
+
+    # Plans section
+    st.subheader(f"📋 {t('home_plans_title')}")
+
+    logged_in = _is_logged_in()
+    current_role = _get_global_role() if logged_in else None
+
+    col1, col2, col3 = st.columns(3)
+
+    # Visitor plan (no login)
+    with col1:
+        with st.container(border=True):
+            st.markdown(f"### 👁️ {t('home_plan_visitor')}")
+            st.caption(t("home_plan_visitor_desc"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_take_public_tests')}")
+            st.markdown(f"✅ {t('home_feature_view_materials')}")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("---")
+            if not logged_in:
+                if st.button(t("home_get_started"), key="visitor_start", use_container_width=True):
+                    st.session_state.page = "Tests"
+                    st.rerun()
+
+    # Knower plan (free)
+    with col2:
+        is_current = logged_in and current_role == "knower"
+        with st.container(border=True):
+            st.markdown(f"### 🎓 {t('home_plan_knower')}")
+            st.caption(t("home_plan_knower_access"))
+            if is_current:
+                st.success(t("home_current_plan"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_take_public_tests')}")
+            st.markdown(f"✅ {t('home_feature_view_materials')}")
+            st.markdown(f"✅ {t('home_feature_create_tests')}")
+            st.markdown(f"✅ {t('home_feature_upload_materials')}")
+            st.markdown(f"✅ {t('home_feature_track_progress')}")
+            st.markdown(f"✅ {t('home_feature_invite_collaborators')}")
+            st.markdown("&nbsp;")
+            st.markdown("---")
+            if not logged_in:
+                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knower_login", use_container_width=True)
+
+    # Knowter plan (premium)
+    with col3:
+        is_current = logged_in and current_role == "knowter"
+        is_knower = logged_in and current_role == "knower"
+        with st.container(border=True):
+            st.markdown(f"### 🚀 {t('home_plan_knowter')}")
+            st.caption(t("home_plan_knowter_access"))
+            if is_current:
+                st.success(t("home_current_plan"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_take_public_tests')}")
+            st.markdown(f"✅ {t('home_feature_view_materials')}")
+            st.markdown(f"✅ {t('home_feature_create_tests')}")
+            st.markdown(f"✅ {t('home_feature_upload_materials')}")
+            st.markdown(f"✅ {t('home_feature_track_progress')}")
+            st.markdown(f"✅ {t('home_feature_invite_collaborators')}")
+            st.markdown(f"✅ {t('home_feature_create_courses')}")
+            st.markdown(f"✅ {t('home_feature_course_collaborators')}")
+            st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
+            st.markdown(f"📋 {t('home_feature_periodic_survey')}")
+            st.markdown("---")
+            if not logged_in:
+                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knowter_login", use_container_width=True)
+            elif is_knower:
+                # Check if user already has a pending request
+                status = get_user_survey_status(st.session_state.get("user_id"))
+                if status and status.get("pending_approval"):
+                    st.info(t("pending_admin_review"))
+                else:
+                    # Show "Become Knowter" button for knowers who want to upgrade
+                    if st.button(t("become_knowter"), key="become_knowter_btn", use_container_width=True):
+                        st.session_state.page = "Choose Access Type"
+                        st.rerun()
+
+
+def show_privacy_policy():
+    """Display the privacy policy page."""
+    if st.button(f"← {t('back')}"):
+        st.session_state.page = "Home"
+        st.rerun()
+
+    content = _read_legal_document("privacy_policy")
+    if content:
+        st.markdown(content)
+    else:
+        st.warning("Privacy policy not available.")
+
+
+def show_terms_and_conditions():
+    """Display the terms and conditions page."""
+    if st.button(f"← {t('back')}"):
+        st.session_state.page = "Home"
+        st.rerun()
+
+    content = _read_legal_document("terms")
+    if content:
+        st.markdown(content)
+    else:
+        st.warning("Terms and conditions not available.")
+
+
+def show_choose_access_type():
+    """Show the page for choosing Knowter access type (paid or survey-based)."""
+    if st.button(f"← {t('back')}"):
+        st.session_state.page = "Home"
+        st.rerun()
+
+    st.header(t("choose_access_type"))
+    st.write(t("choose_access_type_desc"))
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        with st.container(border=True):
+            st.subheader(f"💳 {t('paid_plan')}")
+            st.write(t("paid_plan_desc"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_create_courses')}")
+            st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
+            st.markdown(f"🚫 {t('home_feature_periodic_survey')}")
+            st.markdown("---")
+            st.button(
+                t("paid_plan_coming_soon"),
+                key="paid_plan_btn",
+                use_container_width=True,
+                disabled=True
+            )
+
+    with col2:
+        with st.container(border=True):
+            st.subheader(f"📋 {t('survey_based_plan')}")
+            st.write(t("survey_based_plan_desc"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_create_courses')}")
+            st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
+            st.markdown(f"📋 {t('home_feature_periodic_survey')}")
+            st.markdown("---")
+            if st.button(t("request_survey_access"), key="survey_access_btn", use_container_width=True):
+                user_id = st.session_state.get("user_id")
+                # Create pending approval request
+                status = get_user_survey_status(user_id)
+                if not status:
+                    create_user_survey_status(user_id, "survey", initial_completed=False, pending_approval=True)
+                else:
+                    update_user_survey_status(user_id, pending_approval=True)
+                st.success(t("access_request_sent"))
+                st.session_state.page = "Home"
+                st.rerun()
+
+
+def show_terms_acceptance():
+    """Show the terms and privacy policy acceptance screen for new user registration."""
+    pending = st.session_state.get("pending_registration", {})
+    if not pending:
+        return False
+
+    st.header(t("welcome_new_user"))
+    st.write(t("accept_terms_intro"))
+
+    # Show terms and conditions in an expander
+    with st.expander(f"📜 {t('terms_and_conditions')}", expanded=False):
+        terms_content = _read_legal_document("terms")
+        if terms_content:
+            st.markdown(terms_content)
+
+    # Show privacy policy in an expander
+    with st.expander(f"🔒 {t('privacy_policy')}", expanded=False):
+        privacy_content = _read_legal_document("privacy_policy")
+        if privacy_content:
+            st.markdown(privacy_content)
+
+    st.divider()
+
+    # Acceptance checkboxes
+    accept_terms = st.checkbox(t("i_accept_terms"), key="accept_terms_checkbox")
+    accept_privacy = st.checkbox(t("i_accept_privacy"), key="accept_privacy_checkbox")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(t("create_account"), type="primary", disabled=not (accept_terms and accept_privacy)):
+            if accept_terms and accept_privacy:
+                # Create the user account
+                email = pending["email"]
+                name = pending["name"]
+                user_id = get_or_create_google_user(email, name)
+                resolve_collaborator_user_id(email, user_id)
+                st.session_state.user_id = user_id
+                st.session_state.username = name
+                # Clear pending registration
+                del st.session_state.pending_registration
+                st.rerun()
+            else:
+                st.warning(t("must_accept_both"))
+    with col2:
+        if st.button(t("cancel_registration"), type="secondary"):
+            # Clear pending registration and logout
+            del st.session_state.pending_registration
+            st.logout()
+            st.rerun()
+
+    return True
+
+
 def show_test_catalog():
     """Show a searchable catalog of available tests."""
     user_id = st.session_state.get("user_id")
@@ -2599,7 +2872,7 @@ def show_dashboard():
     program_ids = get_user_program_ids(user_id)
     if program_ids:
         st.divider()
-        st.subheader(t("your_programs"))
+        st.subheader(t("your_courses"))
 
         # Get program performance data
         program_performance = get_programs_performance(user_id, program_ids)
@@ -2630,9 +2903,9 @@ def show_dashboard():
 
                 with col_actions:
                     # Go to program button
-                    if st.button(t("view_program"), key=f"view_prog_{program_id}", use_container_width=True):
+                    if st.button(t("view_course"), key=f"view_prog_{program_id}", use_container_width=True):
                         st.session_state.selected_program = program_id
-                        st.session_state.page = "Configurar Programa"
+                        st.session_state.page = "Configurar Curso"
                         st.rerun()
 
 
@@ -3428,13 +3701,13 @@ def _load_profile_to_session():
 
 
 def _get_global_role():
-    """Get the current user's global role. Returns 'free' if not logged in."""
-    return st.session_state.get("global_role", "free")
+    """Get the current user's global role. Returns 'knower' if not logged in."""
+    return st.session_state.get("global_role", "knower")
 
 
-def _is_premium_or_admin():
-    """Check if user has premium or admin global role."""
-    return _get_global_role() in ("premium", "admin")
+def _is_knowter_or_admin():
+    """Check if user has knowter or admin global role."""
+    return _get_global_role() in ("knowter", "admin")
 
 
 def _is_global_admin():
@@ -3444,12 +3717,152 @@ def _is_global_admin():
 
 def _can_create_tests():
     """Check if user can create tests. Students cannot create tests."""
-    return _get_global_role() in ("free", "premium", "admin")
+    return _get_global_role() in ("knower", "knowter", "admin")
 
 
 def _can_create_programs():
-    """Check if user can create programs. Only premium and admin users can create programs."""
-    return _get_global_role() in ("premium", "admin")
+    """Check if user can create programs. Only knowter and admin users can create programs."""
+    return _get_global_role() in ("knowter", "admin")
+
+
+def _needs_survey():
+    """Check if current user needs to complete a survey to maintain access.
+
+    Returns (needs_survey: bool, survey: dict or None)
+    """
+    if not _is_logged_in():
+        return False, None
+    user_id = st.session_state.get("user_id")
+    status = get_user_survey_status(user_id)
+    if not status or status["knowter_access_type"] != "survey":
+        return False, None
+    if status["access_revoked"]:
+        return False, None
+    if status["pending_approval"]:
+        return False, None
+
+    # Check if periodic survey is needed
+    active_survey = get_active_periodic_survey()
+    if active_survey and not has_completed_survey(user_id, active_survey["id"]):
+        return True, active_survey
+    return False, None
+
+
+def _check_survey_deadline():
+    """Check if user's survey deadline has passed and return warning info.
+
+    Returns dict with keys: warning, days_remaining, deadline, overdue
+    """
+    if not _is_logged_in():
+        return None
+    user_id = st.session_state.get("user_id")
+    status = get_user_survey_status(user_id)
+    if not status or status["knowter_access_type"] != "survey":
+        return None
+    if status["access_revoked"] or status["pending_approval"]:
+        return None
+
+    if not status["survey_deadline"]:
+        return None
+
+    from datetime import datetime
+    try:
+        deadline = datetime.fromisoformat(status["survey_deadline"])
+        now = datetime.now()
+        days_remaining = (deadline - now).days
+
+        return {
+            "deadline": deadline.strftime("%Y-%m-%d"),
+            "days_remaining": days_remaining,
+            "warning": days_remaining <= 7,
+            "overdue": days_remaining < 0
+        }
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_pending_approval():
+    """Check if user is awaiting admin approval for knowter access."""
+    if not _is_logged_in():
+        return False
+    user_id = st.session_state.get("user_id")
+    status = get_user_survey_status(user_id)
+    if not status:
+        return False
+    return status.get("pending_approval", False)
+
+
+def _needs_survey_for_feature():
+    """Check if a survey-based knowter needs to complete a survey before accessing knowter features.
+    Returns a tuple: (needs_survey, survey_type, survey)
+    - needs_survey: True if user needs to complete a survey
+    - survey_type: 'initial' or 'periodic'
+    - survey: The survey object to show, or None
+    """
+    if not _is_logged_in():
+        return (False, None, None)
+
+    user_id = st.session_state.get("user_id")
+    current_role = st.session_state.get("current_role", "knower")
+
+    # Only check for knowters with survey-based access
+    if current_role != "knowter":
+        return (False, None, None)
+
+    status = get_user_survey_status(user_id)
+    if not status:
+        return (False, None, None)
+
+    # Paid or granted access types don't need surveys
+    if status.get("knowter_access_type") in ("paid", "granted"):
+        return (False, None, None)
+
+    # Check if initial survey is not completed
+    if not status.get("initial_survey_completed"):
+        survey = get_active_initial_survey()
+        if survey and not has_completed_survey(user_id, survey["id"]):
+            return (True, "initial", survey)
+
+    # Check if access is on hold (needs periodic survey)
+    if status.get("access_on_hold"):
+        survey = get_active_periodic_survey()
+        if survey and not has_completed_survey(user_id, survey["id"]):
+            return (True, "periodic", survey)
+
+    # Check if deadline passed and needs periodic survey
+    from datetime import datetime
+    deadline = status.get("survey_deadline")
+    if deadline:
+        try:
+            deadline_dt = datetime.fromisoformat(deadline)
+            if datetime.now() > deadline_dt:
+                # Deadline passed, put on hold and require survey
+                from db import put_access_on_hold
+                put_access_on_hold(user_id)
+                survey = get_active_periodic_survey()
+                if survey and not has_completed_survey(user_id, survey["id"]):
+                    return (True, "periodic", survey)
+        except (ValueError, TypeError):
+            pass
+
+    return (False, None, None)
+
+
+def _show_survey_required_message(survey_type, survey, return_page):
+    """Show a message that a survey is required and a button to take it."""
+    st.warning(t("access_on_hold_message"))
+
+    if survey:
+        if st.button(t("take_survey_now"), type="primary"):
+            st.session_state["return_after_survey"] = return_page
+            if survey_type == "initial":
+                st.session_state.page = "Take Initial Survey"
+            else:
+                st.session_state.page = "Take Periodic Survey"
+                st.session_state["pending_survey"] = survey
+            st.rerun()
+    else:
+        st.info(t("no_active_survey"))
 
 
 def show_profile():
@@ -3494,6 +3907,30 @@ def show_profile():
         st.session_state.page = st.session_state.get("prev_page", "Tests")
         st.rerun()
 
+    # Delete account section
+    st.divider()
+    with st.expander(f"⚠️ {t('delete_account')}", expanded=False):
+        st.warning(t("delete_account_warning"))
+        # Get user's email from the database
+        from db import get_connection
+        conn = get_connection()
+        row = conn.execute("SELECT username FROM users WHERE id = ?", (st.session_state.user_id,)).fetchone()
+        conn.close()
+        user_email = row[0] if row else ""
+
+        confirm_email = st.text_input(
+            t("delete_account_confirm_email"),
+            key="delete_account_confirm_input",
+            placeholder=user_email,
+        )
+        email_matches = confirm_email.lower().strip() == user_email.lower().strip()
+        if st.button(t("delete_account"), type="primary", disabled=not email_matches):
+            delete_user_account(st.session_state.user_id)
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.logout()
+            st.rerun()
+
 
 def show_admin_panel():
     """Show the admin panel for managing user roles."""
@@ -3522,44 +3959,513 @@ def show_admin_panel():
     st.write(t("total_users", n=len(filtered_users)))
 
     # Role options (student role removed from global roles - only applies at test/program level)
-    role_options = ["free", "premium", "admin"]
+    role_options = ["knower", "knowter", "admin"]
     role_labels = {
-        "free": t("global_role_free"),
-        "premium": t("global_role_premium"),
+        "knower": t("global_role_knower"),
+        "knowter": t("global_role_knowter"),
         "admin": t("global_role_admin"),
     }
 
     # Display users in a table-like format
     for user in filtered_users:
         display = user["display_name"] or user["email"]
-        current_role = user["global_role"] or "free"
-        # Handle legacy 'student' role by treating it as 'free'
-        if current_role == "student":
-            current_role = "free"
+        current_role = user["global_role"] or "knower"
+        # Handle legacy roles by treating them as 'knower'
+        if current_role in ("student", "free"):
+            current_role = "knower"
+        elif current_role == "premium":
+            current_role = "knowter"
         current_idx = role_options.index(current_role) if current_role in role_options else 0
+        is_self = user["id"] == st.session_state.user_id
 
-        with st.form(key=f"user_role_form_{user['id']}"):
-            col_info, col_role, col_save = st.columns([3, 2, 1])
-            with col_info:
-                st.write(f"**{display}**")
-                if user["display_name"]:
-                    st.caption(user["email"])
-            with col_role:
-                new_role = st.selectbox(
-                    t("role"),
-                    options=role_options,
-                    index=current_idx,
-                    format_func=lambda x: role_labels.get(x, x),
-                    label_visibility="collapsed",
-                )
-            with col_save:
-                st.write("")  # Spacer for alignment
-                submitted = st.form_submit_button("💾", help=t("save"))
-
-            if submitted:
+        col_info, col_role, col_delete = st.columns([3, 2, 0.5])
+        with col_info:
+            st.write(f"**{display}**")
+            if user["display_name"]:
+                st.caption(user["email"])
+        with col_role:
+            new_role = st.selectbox(
+                t("role"),
+                options=role_options,
+                index=current_idx,
+                format_func=lambda x: role_labels.get(x, x),
+                label_visibility="collapsed",
+                key=f"role_select_{user['id']}",
+            )
+            if new_role != current_role:
                 set_user_global_role(user["id"], new_role)
-                st.success(t("role_updated", user=display, role=role_labels[new_role]))
                 st.rerun()
+        with col_delete:
+            if is_self:
+                st.button("🗑️", key=f"delete_user_{user['id']}", disabled=True, help=t("cannot_delete_self"))
+            else:
+                with st.popover("🗑️", help=t("delete_user")):
+                    st.warning(t("delete_user_confirm", user=display))
+                    st.caption(t("delete_user_admin_warning"))
+                    if st.button(t("delete_user"), key=f"confirm_delete_{user['id']}", type="primary"):
+                        delete_user_account(user["id"])
+                        st.success(t("user_deleted", user=display))
+                        st.rerun()
+
+
+# --- Survey Pages ---
+
+def show_survey_page(survey):
+    """Display a survey for the user to complete."""
+    user_id = st.session_state.get("user_id")
+
+    # Check if user has already completed this survey
+    if has_completed_survey(user_id, survey["id"]):
+        st.header(f"📋 {survey['title']}")
+        st.success(t("survey_already_completed"))
+
+        # Show appropriate message based on survey type
+        status = get_user_survey_status(user_id)
+        if survey["survey_type"] == "initial" and status and status.get("pending_approval"):
+            st.info(t("pending_approval_message"))
+
+        if st.button(t("back")):
+            st.session_state.page = "Home"
+            st.rerun()
+        return
+
+    st.header(f"📋 {survey['title']}")
+    if survey.get("description"):
+        st.write(survey["description"])
+
+    st.divider()
+
+    questions = get_survey_questions(survey["id"])
+    if not questions:
+        st.warning(t("no_questions"))
+        return
+
+    # Initialize answers in session state
+    if "survey_answers" not in st.session_state:
+        st.session_state.survey_answers = {}
+
+    all_required_answered = True
+
+    for q in questions:
+        st.write(f"**{q['question_num']}. {q['question_text']}**")
+        if q["required"]:
+            st.caption(f"* {t('required_field')}")
+
+        key = f"survey_q_{q['id']}"
+
+        if q["question_type"] == "multiple_choice":
+            options = q["options"] if q["options"] else []
+            if options:
+                answer = st.radio(
+                    "", options=options,
+                    key=key, label_visibility="collapsed"
+                )
+                st.session_state.survey_answers[q["id"]] = {"answer_text": answer}
+            else:
+                st.warning("No options defined")
+                if q["required"]:
+                    all_required_answered = False
+
+        elif q["question_type"] == "text":
+            answer = st.text_area("", key=key, label_visibility="collapsed")
+            st.session_state.survey_answers[q["id"]] = {"answer_text": answer}
+            if q["required"] and not answer.strip():
+                all_required_answered = False
+
+        elif q["question_type"] == "rating":
+            options = q["options"] if q["options"] else ["1", "2", "3", "4", "5"]
+            answer = st.select_slider("", options=options, key=key, label_visibility="collapsed")
+            st.session_state.survey_answers[q["id"]] = {"answer_text": answer}
+
+        elif q["question_type"] == "checkbox":
+            selected = []
+            for i, opt in enumerate(q["options"]):
+                if st.checkbox(opt, key=f"{key}_{i}"):
+                    selected.append(opt)
+            st.session_state.survey_answers[q["id"]] = {"answer_options": selected}
+            if q["required"] and not selected:
+                all_required_answered = False
+
+        st.divider()
+
+    if st.button(t("submit_survey"), type="primary", disabled=not all_required_answered):
+        answers = [
+            {"question_id": q_id, **data}
+            for q_id, data in st.session_state.survey_answers.items()
+        ]
+        user_id = st.session_state.get("user_id")
+        submit_survey_response(survey["id"], user_id, answers)
+
+        # Update user status based on survey type
+        from datetime import datetime, timedelta
+        new_deadline = (datetime.now() + timedelta(days=30)).isoformat()
+        status = get_user_survey_status(user_id)
+
+        if survey["survey_type"] == "initial":
+            # Initial survey completed - set deadline and release any hold
+            if status:
+                update_user_survey_status(
+                    user_id,
+                    initial_completed=True,
+                    deadline=new_deadline,
+                    access_on_hold=False
+                )
+            else:
+                # This shouldn't happen in normal flow, but handle it
+                create_user_survey_status(user_id, "survey", initial_completed=True, pending_approval=False)
+                update_user_survey_status(user_id, deadline=new_deadline)
+        elif survey["survey_type"] == "periodic" and status:
+            # Periodic survey - reset deadline and release any hold
+            update_user_survey_status(
+                user_id,
+                last_survey_id=survey["id"],
+                deadline=new_deadline,
+                access_on_hold=False
+            )
+
+        # Clear answers and show success
+        if "survey_answers" in st.session_state:
+            del st.session_state.survey_answers
+        st.success(t("survey_completed"))
+        # Return to the page they were trying to access, or home
+        return_page = st.session_state.get("return_after_survey", "Home")
+        st.session_state.page = return_page
+        if "return_after_survey" in st.session_state:
+            del st.session_state["return_after_survey"]
+        st.rerun()
+
+
+def show_admin_surveys():
+    """Show admin panel for managing surveys."""
+    if not _is_global_admin():
+        st.error(t("no_permission"))
+        return
+
+    st.header(f"📋 {t('surveys')}")
+
+    # Navigation tabs
+    tab1, tab2, tab3 = st.tabs([t("surveys"), t("users_pending_approval"), t("users_needing_survey")])
+
+    with tab1:
+        _show_survey_management()
+
+    with tab2:
+        _show_pending_approvals()
+
+    with tab3:
+        _show_survey_users()
+
+
+def _show_survey_management():
+    """Show survey list and management UI."""
+    # Create new survey button
+    if st.button(t("create_survey"), type="primary"):
+        st.session_state.creating_survey = True
+        st.rerun()
+
+    # Show survey creation form
+    if st.session_state.get("creating_survey"):
+        _show_survey_creation_form()
+        return
+
+    # Show survey editor if editing
+    if st.session_state.get("editing_survey_id"):
+        _show_survey_editor(st.session_state.editing_survey_id)
+        return
+
+    # Show survey statistics if viewing
+    if st.session_state.get("viewing_survey_stats"):
+        _show_survey_statistics(st.session_state.viewing_survey_stats)
+        return
+
+    # List all surveys
+    surveys = get_all_surveys()
+    if not surveys:
+        st.info(t("no_surveys"))
+        return
+
+    for survey in surveys:
+        with st.container(border=True):
+            col_info, col_actions = st.columns([3, 2])
+            with col_info:
+                title_display = survey["title"]
+                if survey["is_active"]:
+                    title_display = f"✅ {title_display}"
+                st.subheader(title_display)
+                type_label = t(f"survey_type_{survey['survey_type']}")
+                st.caption(f"{t('survey_type')}: {type_label}")
+                st.caption(f"{t('n_questions', n=survey['question_count'])} · {t('n_responses', n=survey['response_count'])}")
+
+            with col_actions:
+                btn_cols = st.columns(4)
+                with btn_cols[0]:
+                    if st.button("✏️", key=f"edit_survey_{survey['id']}", help=t("edit")):
+                        st.session_state.editing_survey_id = survey["id"]
+                        st.rerun()
+                with btn_cols[1]:
+                    if st.button("📊", key=f"stats_survey_{survey['id']}", help=t("survey_statistics")):
+                        st.session_state.viewing_survey_stats = survey["id"]
+                        st.rerun()
+                with btn_cols[2]:
+                    if not survey["is_active"]:
+                        if st.button("✅", key=f"activate_survey_{survey['id']}", help=t("set_as_active")):
+                            set_active_survey(survey["id"], survey["survey_type"])
+                            st.success(t("survey_activated"))
+                            st.rerun()
+                    else:
+                        st.button("✅", key=f"active_survey_{survey['id']}", disabled=True, help=t("active_survey"))
+                with btn_cols[3]:
+                    with st.popover("🗑️", help=t("delete")):
+                        st.warning(t("confirm_delete"))
+                        if st.button(t("delete"), key=f"confirm_del_survey_{survey['id']}", type="primary"):
+                            delete_survey(survey["id"])
+                            st.rerun()
+
+
+def _show_survey_creation_form():
+    """Show form to create a new survey."""
+    st.subheader(t("create_survey"))
+
+    if st.button(t("back")):
+        st.session_state.creating_survey = False
+        st.rerun()
+
+    title = st.text_input(t("survey_title"), key="new_survey_title")
+    description = st.text_area(t("survey_description"), key="new_survey_desc")
+
+    survey_types = ["initial", "periodic", "feedback"]
+    type_labels = {
+        "initial": t("survey_type_initial"),
+        "periodic": t("survey_type_periodic"),
+        "feedback": t("survey_type_feedback"),
+    }
+    survey_type = st.selectbox(
+        t("survey_type"),
+        options=survey_types,
+        format_func=lambda x: type_labels[x],
+        key="new_survey_type"
+    )
+
+    if st.button(t("create_survey"), type="primary", key="create_survey_btn"):
+        if not title.strip():
+            st.warning(t("title_required"))
+        else:
+            survey_id = create_survey(title.strip(), description.strip(), survey_type)
+            st.session_state.creating_survey = False
+            st.session_state.editing_survey_id = survey_id
+            st.success(t("survey_saved"))
+            st.rerun()
+
+
+def _show_survey_editor(survey_id):
+    """Show survey editor with question management."""
+    survey = get_survey(survey_id)
+    if not survey:
+        st.error("Survey not found")
+        st.session_state.editing_survey_id = None
+        st.rerun()
+        return
+
+    st.subheader(f"{t('edit_survey')}: {survey['title']}")
+
+    if st.button(t("back_to_surveys")):
+        st.session_state.editing_survey_id = None
+        st.rerun()
+
+    # Survey metadata
+    with st.expander(t("survey_description"), expanded=False):
+        new_title = st.text_input(t("survey_title"), value=survey["title"], key="edit_survey_title")
+        new_desc = st.text_area(t("survey_description"), value=survey["description"] or "", key="edit_survey_desc")
+        if st.button(t("save"), key="save_survey_meta"):
+            update_survey(survey_id, new_title, new_desc, survey.get("valid_from"), survey.get("valid_until"))
+            st.success(t("survey_saved"))
+            st.rerun()
+
+    st.divider()
+
+    # Questions section
+    st.subheader(t("survey_questions"))
+
+    questions = get_survey_questions(survey_id)
+
+    # Add new question form
+    with st.expander(f"➕ {t('add_survey_question')}", expanded=False):
+        q_types = ["multiple_choice", "text", "rating", "checkbox"]
+        q_type_labels = {
+            "multiple_choice": t("question_type_multiple_choice"),
+            "text": t("question_type_text"),
+            "rating": t("question_type_rating"),
+            "checkbox": t("question_type_checkbox"),
+        }
+
+        new_q_text = st.text_area(t("question"), key="new_sq_text")
+        new_q_type = st.selectbox(
+            t("question_type"),
+            options=q_types,
+            format_func=lambda x: q_type_labels[x],
+            key="new_sq_type"
+        )
+
+        # Options for choice-based questions
+        new_q_options = []
+        if new_q_type in ("multiple_choice", "checkbox", "rating"):
+            st.write(t("options"))
+            for i in range(5):
+                opt = st.text_input(t("option_placeholder", n=i+1), key=f"new_sq_opt_{i}")
+                if opt.strip():
+                    new_q_options.append(opt.strip())
+
+        new_q_required = st.checkbox(t("required_field"), value=True, key="new_sq_required")
+
+        if st.button(t("add_survey_question"), type="primary", key="add_sq_btn"):
+            if not new_q_text.strip():
+                st.warning(t("question") + " is required")
+            else:
+                next_num = get_next_survey_question_num(survey_id)
+                add_survey_question(survey_id, next_num, new_q_type, new_q_text.strip(), new_q_options, new_q_required)
+                st.success(t("question_saved"))
+                st.rerun()
+
+    # Display existing questions
+    for q in questions:
+        with st.container(border=True):
+            col_q, col_actions = st.columns([4, 1])
+            with col_q:
+                q_type_label = t(f"question_type_{q['question_type']}")
+                st.write(f"**{q['question_num']}. {q['question_text']}**")
+                st.caption(f"{q_type_label} | {'*' if q['required'] else ''}{t('required_field') if q['required'] else t('optional_field')}")
+                if q["options"]:
+                    st.caption(f"{t('options')}: {', '.join(q['options'])}")
+            with col_actions:
+                with st.popover("🗑️", help=t("delete")):
+                    if st.button(t("delete"), key=f"del_sq_{q['id']}", type="primary"):
+                        delete_survey_question(q["id"])
+                        st.success(t("question_deleted"))
+                        st.rerun()
+
+
+def _show_survey_statistics(survey_id):
+    """Show survey response statistics."""
+    survey = get_survey(survey_id)
+    if not survey:
+        st.session_state.viewing_survey_stats = None
+        st.rerun()
+        return
+
+    st.subheader(f"📊 {survey['title']}")
+
+    if st.button(t("back_to_surveys")):
+        st.session_state.viewing_survey_stats = None
+        st.rerun()
+
+    responses = get_survey_responses(survey_id)
+    st.write(t("n_responses", n=len(responses)))
+
+    if not responses:
+        st.info(t("no_responses_yet"))
+        return
+
+    # Show statistics per question
+    stats = get_survey_answer_statistics(survey_id)
+
+    for q_id, stat in stats.items():
+        q = stat.get("question", {})
+        st.subheader(f"{q.get('question_num', '?')}. {q.get('question_text', 'Unknown')}")
+
+        if "counts" in stat:
+            # Multiple choice, rating, checkbox
+            counts = stat["counts"]
+            if counts:
+                import pandas as pd
+                df = pd.DataFrame(list(counts.items()), columns=["Option", "Count"])
+                st.bar_chart(df.set_index("Option"))
+        elif "text_responses" in stat:
+            # Text responses
+            for i, resp in enumerate(stat["text_responses"][:10]):
+                st.caption(f"• {resp}")
+            if len(stat["text_responses"]) > 10:
+                st.caption(f"... and {len(stat['text_responses']) - 10} more")
+
+        st.divider()
+
+    # Show individual responses
+    with st.expander(t("view_responses")):
+        for resp in responses:
+            st.write(f"**{resp['display_name']}** ({resp['email']})")
+            st.caption(f"{resp['completed_at']}")
+            answers = get_survey_response_answers(resp["id"])
+            for ans in answers:
+                st.write(f"• {ans['question_text']}: {ans['answer_text'] or ', '.join(ans['answer_options'])}")
+            st.divider()
+
+
+def _show_pending_approvals():
+    """Show users pending approval for knowter access."""
+    pending = get_users_pending_approval()
+
+    if not pending:
+        st.info(t("no_users"))
+        return
+
+    st.write(f"**{len(pending)} {t('users_pending_approval')}**")
+
+    for user in pending:
+        with st.container(border=True):
+            col_info, col_action = st.columns([3, 1])
+            with col_info:
+                st.write(f"**{user['display_name']}**")
+                st.caption(user["email"])
+                if user["survey_date"]:
+                    st.caption(f"📅 {user['survey_date']}")
+            with col_action:
+                if st.button(t("approve_access"), key=f"approve_{user['user_id']}", type="primary"):
+                    approve_knowter_access(user["user_id"])
+                    st.success(t("access_approved"))
+                    st.rerun()
+
+
+def _show_survey_users():
+    """Show users with survey deadlines."""
+    users = get_users_needing_survey()
+    overdue = get_users_with_overdue_surveys()
+
+    if overdue:
+        st.subheader(f"⚠️ {t('overdue')} ({len(overdue)})")
+        for user in overdue:
+            with st.container(border=True):
+                col_info, col_action = st.columns([3, 1])
+                with col_info:
+                    st.write(f"**{user['display_name']}**")
+                    st.caption(user["email"])
+                    st.caption(f"⏰ {user['deadline']}")
+                with col_action:
+                    if st.button(t("revoke_access"), key=f"revoke_{user['user_id']}", type="primary"):
+                        revoke_survey_based_access(user["user_id"])
+                        st.success(t("access_revoked"))
+                        st.rerun()
+
+    if users:
+        st.subheader(t("users_needing_survey"))
+        for user in users:
+            # Skip if already in overdue list
+            if any(o["user_id"] == user["user_id"] for o in overdue):
+                continue
+            with st.container(border=True):
+                st.write(f"**{user['display_name']}**")
+                st.caption(user["email"])
+                if user["deadline"]:
+                    from datetime import datetime
+                    try:
+                        deadline = datetime.fromisoformat(user["deadline"])
+                        days = (deadline - datetime.now()).days
+                        if days <= 7:
+                            st.warning(t("days_remaining", n=days))
+                        else:
+                            st.caption(f"📅 {t('survey_deadline')}: {user['deadline'][:10]}")
+                    except (ValueError, TypeError):
+                        st.caption(f"📅 {user['deadline']}")
+    elif not overdue:
+        st.info(t("no_users"))
 
 
 def _toggle_bulk_program(prog_id):
@@ -3639,16 +4545,16 @@ def _render_program_card(prog, user_id, has_access=True, prefix="", bulk_delete_
                 if has_access:
                     if st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", use_container_width=True, help=t("select")):
                         st.session_state.selected_program = prog["id"]
-                        st.session_state.page = "Configurar Programa"
+                        st.session_state.page = "Configurar Curso"
                         st.rerun()
                 else:
                     st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", use_container_width=True, disabled=True, help=t("select"))
             if can_edit:
                 col_idx += 1
                 with btn_cols[col_idx]:
-                    if st.button("✏️", key=f"{prefix}prog_edit_{prog['id']}", use_container_width=True, help=t("edit_program")):
+                    if st.button("✏️", key=f"{prefix}prog_edit_{prog['id']}", use_container_width=True, help=t("edit_course")):
                         st.session_state.editing_program_id = prog["id"]
-                        st.session_state.page = "Editar Programa"
+                        st.session_state.page = "Editar Curso"
                         st.rerun()
                 col_idx += 1
                 with btn_cols[col_idx]:
@@ -3660,7 +4566,7 @@ def _render_program_card(prog, user_id, has_access=True, prefix="", bulk_delete_
                         mime="application/json",
                         key=f"{prefix}prog_export_{prog['id']}",
                         use_container_width=True,
-                        help=t("export_program"),
+                        help=t("export_course"),
                     )
 
 
@@ -3671,7 +4577,7 @@ def show_programs():
     shared_programs = get_shared_programs(user_id)
     shared_prog_ids = {p["id"] for p in shared_programs}
 
-    st.header(t("programs_header"))
+    st.header(t("courses_header"))
 
     # --- Pending Program Invitations Section ---
     invitations = get_pending_invitations(user_id)
@@ -3702,8 +4608,8 @@ def show_programs():
     if _is_global_admin():
         col_create, col_bulk = st.columns([1, 1])
         with col_create:
-            if st.button(t("create_program"), type="secondary", use_container_width=True):
-                st.session_state.page = "Crear Programa"
+            if st.button(t("create_course"), type="secondary", use_container_width=True):
+                st.session_state.page = "Crear Curso"
                 st.rerun()
         with col_bulk:
             bulk_delete_mode = st.toggle(t("bulk_delete_mode"), key="prog_bulk_delete_mode")
@@ -3711,8 +4617,8 @@ def show_programs():
                 if "bulk_delete_programs" not in st.session_state:
                     st.session_state.bulk_delete_programs = set()
     elif _can_create_programs():
-        if st.button(t("create_program"), type="secondary"):
-            st.session_state.page = "Crear Programa"
+        if st.button(t("create_course"), type="secondary"):
+            st.session_state.page = "Crear Curso"
             st.rerun()
 
     # Show bulk delete controls below the create button
@@ -3726,7 +4632,7 @@ def show_programs():
                 for prog_id in st.session_state.bulk_delete_programs:
                     delete_program(prog_id)
                 st.session_state.bulk_delete_programs = set()
-                st.success(t("programs_deleted", n=selected_count))
+                st.success(t("courses_deleted", n=selected_count))
                 st.rerun()
 
     # Build accessible set
@@ -3741,23 +4647,23 @@ def show_programs():
     other_progs = [p for p in programs if p.get("owner_id") != user_id and p["id"] not in shared_prog_ids]
 
     if my_progs:
-        st.subheader(t("my_programs"))
+        st.subheader(t("my_courses"))
         for prog in my_progs:
             _render_program_card(prog, user_id, has_access=True, prefix="my_", bulk_delete_mode=bulk_delete_mode)
 
     if shared_programs:
-        st.subheader(t("shared_programs"))
+        st.subheader(t("shared_courses"))
         for prog in shared_programs:
             _render_program_card(prog, user_id, has_access=True, prefix="shared_", bulk_delete_mode=bulk_delete_mode)
 
     if other_progs:
         if my_progs or shared_programs:
-            st.subheader(t("all_programs"))
+            st.subheader(t("all_courses"))
         for prog in other_progs:
             _render_program_card(prog, user_id, has_access=_prog_has_access(prog), bulk_delete_mode=bulk_delete_mode)
 
     if not programs and not shared_programs:
-        st.info(t("no_programs"))
+        st.info(t("no_courses"))
 
 
 def show_create_program():
@@ -3765,41 +4671,55 @@ def show_create_program():
     # Only premium and admin users can create programs
     if not _can_create_programs():
         st.error(t("no_permission"))
-        if st.button(t("back_to_programs")):
-            st.session_state.page = "Programas"
+        if st.button(t("back_to_courses")):
+            st.session_state.page = "Cursos"
             st.rerun()
         return
 
-    st.header(t("create_new_program"))
+    # Check if survey-based knowter needs to complete a survey
+    needs_survey, survey_type, survey = _needs_survey_for_feature()
+    if needs_survey:
+        st.header(t("create_new_course"))
+        _show_survey_required_message(survey_type, survey, "Crear Curso")
+        return
+
+    st.header(t("create_new_course"))
 
     if st.button(t("back")):
-        st.session_state.page = "Programas"
+        st.session_state.page = "Cursos"
         st.rerun()
 
-    title = st.text_input(t("program_title"), key="new_prog_title")
+    title = st.text_input(t("course_title"), key="new_prog_title")
     description = st.text_area(t("description"), key="new_prog_desc")
 
-    if st.button(t("create_program_btn"), type="primary"):
+    if st.button(t("create_course_btn"), type="primary"):
         if not title.strip():
             st.warning(t("title_required"))
         else:
             program_id = create_program(st.session_state.user_id, title.strip(), description.strip())
             st.session_state.editing_program_id = program_id
-            st.session_state.page = "Editar Programa"
+            st.session_state.page = "Editar Curso"
             st.rerun()
 
 
 def show_program_editor():
     """Show program editor page."""
+    # Check if survey-based knowter needs to complete a survey
+    needs_survey, survey_type, survey = _needs_survey_for_feature()
+    if needs_survey:
+        st.header(t("edit_course"))
+        _show_survey_required_message(survey_type, survey, "Editar Curso")
+        return
+
     program_id = st.session_state.get("editing_program_id")
     if not program_id:
-        st.session_state.page = "Programas"
+        st.session_state.page = "Cursos"
         st.rerun()
         return
 
     prog = get_program(program_id)
     if not prog:
-        st.error(t("program_not_found"))
+        st.error(t("course_not_found"))
         return
 
     user_id = st.session_state.get("user_id")
@@ -3821,11 +4741,11 @@ def show_program_editor():
     if st.button(t("back")):
         if "editing_program_id" in st.session_state:
             del st.session_state.editing_program_id
-        st.session_state.page = "Programas"
+        st.session_state.page = "Cursos"
         st.rerun()
 
     # --- Metadata ---
-    st.subheader(t("program_info"))
+    st.subheader(t("course_info"))
     new_title = st.text_input(t("title"), value=prog["title"], key="edit_prog_title", disabled=meta_disabled)
     new_desc = st.text_area(t("description"), value=prog["description"] or "", key="edit_prog_desc", disabled=meta_disabled)
 
@@ -3885,7 +4805,7 @@ def show_program_editor():
                         current_visibility = available_options[0]
                     current_idx = available_options.index(current_visibility)
                     new_visibility = st.selectbox(
-                        t("program_visibility"),
+                        t("course_visibility"),
                         options=available_options,
                         index=current_idx,
                         format_func=lambda x: visibility_labels.get(x, x),
@@ -3903,7 +4823,7 @@ def show_program_editor():
                 visibility_label = visibility_labels.get(pt.get("program_visibility", "public"), t("visibility_public"))
                 st.write(f"**{pt['title']}** ({t('n_questions', n=pt['question_count'])}) - {visibility_label}")
     else:
-        st.info(t("no_tests_in_program"))
+        st.info(t("no_tests_in_course"))
 
     # Add test (owner and admin only)
     if not meta_disabled:
@@ -3940,7 +4860,7 @@ def show_program_editor():
                 selected_test_visibility = test_info_map[selected_test_id].get("visibility", "public")
                 add_visibility_options = get_visibility_options_for_test(selected_test_visibility)
                 add_program_visibility = st.selectbox(
-                    t("program_visibility"),
+                    t("course_visibility"),
                     options=add_visibility_options,
                     index=0,
                     format_func=lambda x: visibility_labels.get(x, x),
@@ -4008,7 +4928,7 @@ def show_program_editor():
     # --- Delete program (owner only) ---
     if prog_role == "owner":
         st.subheader(t("danger_zone"))
-        if st.button(t("delete_program"), type="secondary"):
+        if st.button(t("delete_course"), type="secondary"):
             st.session_state[f"confirm_delete_prog_{program_id}"] = True
 
         if st.session_state.get(f"confirm_delete_prog_{program_id}"):
@@ -4019,7 +4939,7 @@ def show_program_editor():
                     delete_program(program_id)
                     if "editing_program_id" in st.session_state:
                         del st.session_state.editing_program_id
-                    st.session_state.page = "Programas"
+                    st.session_state.page = "Cursos"
                     st.rerun()
             with col_no:
                 if st.button(t("cancel"), key="prog_del_no"):
@@ -4031,13 +4951,13 @@ def show_program_config():
     """Show configuration for a program before starting quiz."""
     program_id = st.session_state.get("selected_program")
     if not program_id:
-        st.session_state.page = "Programas"
+        st.session_state.page = "Cursos"
         st.rerun()
         return
 
     prog = get_program(program_id)
     if not prog:
-        st.error(t("program_not_found"))
+        st.error(t("course_not_found"))
         return
 
     # Access control for private/hidden programs (restricted and public are open to everyone)
@@ -4051,11 +4971,11 @@ def show_program_config():
             )
         )
         if not has_prog_access:
-            st.error(t("program_private_no_access"))
-            if st.button(t("back_to_programs")):
+            st.error(t("course_private_no_access"))
+            if st.button(t("back_to_courses")):
                 if "selected_program" in st.session_state:
                     del st.session_state.selected_program
-                st.session_state.page = "Programas"
+                st.session_state.page = "Cursos"
                 st.rerun()
             return
 
@@ -4211,23 +5131,23 @@ def show_program_config():
                         col_worst.metric(t("worst_topic"), worst_display, f"{worst_stats['percent_correct']}%")
 
     if visible_tests_count == 0:
-        st.info(t("no_tests_in_program"))
+        st.info(t("no_tests_in_course"))
 
     # Action buttons row
     btn_cols = st.columns(4 if can_edit_program else 2)
     col_idx = 0
     with btn_cols[col_idx]:
-        if st.button(t("back_to_programs"), use_container_width=True):
+        if st.button(t("back_to_courses"), use_container_width=True):
             if "selected_program" in st.session_state:
                 del st.session_state.selected_program
-            st.session_state.page = "Programas"
+            st.session_state.page = "Cursos"
             st.rerun()
     col_idx += 1
     if can_edit_program:
         with btn_cols[col_idx]:
             if st.button(f"✏️ {t('edit_program')}", use_container_width=True):
                 st.session_state.editing_program_id = program_id
-                st.session_state.page = "Editar Programa"
+                st.session_state.page = "Editar Curso"
                 st.rerun()
         col_idx += 1
         with btn_cols[col_idx]:
@@ -4242,7 +5162,7 @@ def show_program_config():
             )
 
     if not questions:
-        st.warning(t("no_program_questions"))
+        st.warning(t("no_course_questions"))
         return
 
     st.subheader(t("configuration"))
@@ -4291,7 +5211,7 @@ def show_program_config():
             st.session_state.current_test_id = 0
             st.session_state.current_session_id = session_id
             st.session_state.quiz_started = True
-            st.session_state.page = "Programas"
+            st.session_state.page = "Cursos"
             st.rerun()
 
 
@@ -4300,11 +5220,16 @@ def main():
 
     _try_login()
 
+    # Check if there's a pending registration (new user needs to accept terms)
+    if st.session_state.get("pending_registration"):
+        show_terms_acceptance()
+        return
+
     if _is_logged_in():
         _load_profile_to_session()
 
     if "page" not in st.session_state:
-        st.session_state.page = "Tests"
+        st.session_state.page = "Home"
 
     logged_in = _is_logged_in()
 
@@ -4332,10 +5257,23 @@ def main():
                     st.logout()
                     st.rerun()
         else:
-            st.button(t("login"), on_click=st.login, type="secondary")
+            col_login, col_privacy, col_terms = st.columns([1, 1, 1])
+            with col_login:
+                st.button("🔑", on_click=st.login, help=t("login_with_google"))
+            with col_privacy:
+                if st.button("🔒", key="header_privacy", help=t("privacy_policy")):
+                    st.session_state.page = "Privacy Policy"
+                    st.rerun()
+            with col_terms:
+                if st.button("📜", key="header_terms", help=t("terms_and_conditions")):
+                    st.session_state.page = "Terms"
+                    st.rerun()
 
     # Sidebar navigation
     with st.sidebar:
+        # Logo
+        st.image("assets/KnowtingLogo.png", use_container_width=True)
+
         # Language toggle
         current_lang = st.session_state.get("lang", "es")
         current_idx = UI_LANGUAGES.index(current_lang) if current_lang in UI_LANGUAGES else 0
@@ -4351,11 +5289,16 @@ def main():
             st.rerun()
 
         st.markdown("---")
-        nav_items = [("📝", "Tests", t("tests"))]
+        nav_items = [("🏠", "Home", t("home")), ("📝", "Tests", t("tests"))]
         if logged_in:
             nav_items.append(("📊", "Dashboard", t("dashboard")))
-            nav_items.append(("📚", "Programas", t("programs")))
+            nav_items.append(("📚", "Cursos", t("courses")))
         if logged_in and _is_global_admin():
+            pending_count = get_pending_approval_count()
+            surveys_label = t("surveys")
+            if pending_count > 0:
+                surveys_label = f"{surveys_label} ({pending_count})"
+            nav_items.append(("📋", "Surveys", surveys_label))
             nav_items.append(("⚙️", "Admin", t("admin_panel")))
         for icon, page_id, display in nav_items:
             is_active = st.session_state.page == page_id
@@ -4364,6 +5307,17 @@ def main():
                 st.session_state.page = page_id
                 st.rerun()
         st.markdown("---")
+
+        # Legal links at the bottom of sidebar (icons with tooltips)
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("🔒", key="nav_privacy", help=t("privacy_policy")):
+                st.session_state.page = "Privacy Policy"
+                st.rerun()
+        with col2:
+            if st.button("📜", key="nav_terms", help=t("terms_and_conditions")):
+                st.session_state.page = "Terms"
+                st.rerun()
 
     if "quiz_started" not in st.session_state:
         st.session_state.quiz_started = False
@@ -4382,20 +5336,72 @@ def main():
         show_create_test()
     elif logged_in and st.session_state.page == "Editar Test":
         show_test_editor()
-    elif logged_in and st.session_state.page == "Programas" and not st.session_state.quiz_started:
+    elif logged_in and st.session_state.page == "Cursos" and not st.session_state.quiz_started:
         show_programs()
-    elif logged_in and st.session_state.page == "Crear Programa":
+    elif logged_in and st.session_state.page == "Crear Curso":
         show_create_program()
-    elif logged_in and st.session_state.page == "Editar Programa":
+    elif logged_in and st.session_state.page == "Editar Curso":
         show_program_editor()
-    elif logged_in and st.session_state.page == "Configurar Programa":
+    elif logged_in and st.session_state.page == "Configurar Curso":
         show_program_config()
     elif logged_in and _is_global_admin() and st.session_state.page == "Admin":
         show_admin_panel()
+    elif logged_in and _is_global_admin() and st.session_state.page == "Surveys":
+        show_admin_surveys()
+    elif logged_in and st.session_state.page == "Choose Access Type":
+        show_choose_access_type()
+    elif logged_in and st.session_state.page == "Take Initial Survey":
+        initial_survey = get_active_initial_survey()
+        if initial_survey:
+            show_survey_page(initial_survey)
+        else:
+            st.warning(t("no_active_survey"))
+            if st.button(t("back")):
+                st.session_state.page = "Home"
+                st.rerun()
+    elif logged_in and st.session_state.page == "Take Periodic Survey":
+        pending_survey = st.session_state.get("pending_survey")
+        if pending_survey:
+            show_survey_page(pending_survey)
+        else:
+            periodic_survey = get_active_periodic_survey()
+            if periodic_survey:
+                show_survey_page(periodic_survey)
+            else:
+                st.warning(t("no_active_survey"))
+                if st.button(t("back")):
+                    st.session_state.page = "Home"
+                    st.rerun()
+    elif st.session_state.page == "Home":
+        # Show pending approval message or survey deadline warning
+        if logged_in:
+            if _is_pending_approval():
+                st.info(t("pending_approval_message"))
+            else:
+                deadline_info = _check_survey_deadline()
+                if deadline_info and deadline_info.get("warning"):
+                    if deadline_info.get("overdue"):
+                        st.error(t("survey_deadline_warning", date=deadline_info["deadline"]))
+                    else:
+                        st.warning(t("survey_deadline_warning", date=deadline_info["deadline"]))
+                    # Check if they need to take the survey
+                    needs, survey = _needs_survey()
+                    if needs and survey:
+                        if st.button(t("take_initial_survey"), type="primary"):
+                            st.session_state.page = "Take Periodic Survey"
+                            st.session_state.pending_survey = survey
+                            st.rerun()
+        show_home_page()
+    elif st.session_state.page == "Privacy Policy":
+        show_privacy_policy()
+    elif st.session_state.page == "Terms":
+        show_terms_and_conditions()
     elif st.session_state.quiz_started:
         show_quiz()
-    else:
+    elif st.session_state.page == "Tests":
         show_test_catalog()
+    else:
+        show_home_page()
 
 
 if __name__ == "__main__":
