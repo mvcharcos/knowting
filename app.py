@@ -3120,6 +3120,58 @@ def show_test_editor():
         st.success(st.session_state.pause_time_added)
         del st.session_state.pause_time_added
 
+    # --- Collaborators ---
+    if user_role in ("owner", "admin"):
+        st.subheader(t("collaborators"))
+        collabs = get_collaborators(test_id)
+        if collabs:
+            for c in collabs:
+                col_email, col_status, col_role, col_del = st.columns([2.5, 1, 2, 0.5])
+                with col_email:
+                    st.write(c["email"])
+                with col_status:
+                    status = c.get("status", "accepted")
+                    if status == "pending":
+                        st.caption(f"⏳ {t('status_pending')}")
+                    else:
+                        st.caption(f"✓ {t('status_accepted')}")
+                with col_role:
+                    role_options = ["student", "guest", "reviewer", "admin"]
+                    role_labels = {"student": t("role_student"), "guest": t("role_guest"), "reviewer": t("role_reviewer"), "admin": t("role_admin")}
+                    new_role = st.selectbox(
+                        t("role_label"), options=role_options, index=role_options.index(c["role"]),
+                        format_func=lambda x: role_labels[x], key=f"collab_role_{c['id']}",
+                    )
+                    if new_role != c["role"]:
+                        update_collaborator_role(test_id, c["email"], new_role)
+                        st.rerun()
+                with col_del:
+                    if st.button("🗑️", key=f"del_collab_{c['id']}"):
+                        remove_collaborator(test_id, c["email"])
+                        st.success(t("collaborator_removed"))
+                        st.rerun()
+
+        st.write(t("invite_user"))
+        col_inv_email, col_inv_role, col_inv_btn = st.columns([3, 2, 1])
+        with col_inv_email:
+            inv_email = st.text_input(t("email_placeholder"), key="invite_email", label_visibility="collapsed", placeholder=t("email_placeholder"))
+        with col_inv_role:
+            inv_role_options = ["student", "guest", "reviewer", "admin"]
+            inv_role_labels = {"student": t("role_student"), "guest": t("role_guest"), "reviewer": t("role_reviewer"), "admin": t("role_admin")}
+            inv_role = st.selectbox(t("role_label"), options=inv_role_options, format_func=lambda x: inv_role_labels[x], key="invite_role", label_visibility="collapsed")
+        with col_inv_btn:
+            if st.button(t("invite_btn"), type="secondary"):
+                if not inv_email.strip():
+                    st.warning(t("email_required"))
+                elif inv_email.strip() == st.session_state.get("username"):
+                    st.warning(t("cannot_invite_self"))
+                else:
+                    add_collaborator(test_id, inv_email.strip(), inv_role)
+                    st.success(t("invitation_sent"))
+                    st.rerun()
+
+        st.divider()
+
     # --- Materials (owner and admin only) ---
     if user_role in ("owner", "admin"):
         st.subheader(t("reference_materials_header"))
@@ -3495,58 +3547,6 @@ def show_test_editor():
                         if st.button(t("delete_question"), key=f"{q_key}_del"):
                             delete_question(q["db_id"])
                             st.rerun()
-
-    st.divider()
-
-    # --- Collaborators ---
-    if user_role in ("owner", "admin"):
-        st.subheader(t("collaborators"))
-        collabs = get_collaborators(test_id)
-        if collabs:
-            for c in collabs:
-                col_email, col_status, col_role, col_del = st.columns([2.5, 1, 2, 0.5])
-                with col_email:
-                    st.write(c["email"])
-                with col_status:
-                    status = c.get("status", "accepted")
-                    if status == "pending":
-                        st.caption(f"⏳ {t('status_pending')}")
-                    else:
-                        st.caption(f"✓ {t('status_accepted')}")
-                with col_role:
-                    role_options = ["student", "guest", "reviewer", "admin"]
-                    role_labels = {"student": t("role_student"), "guest": t("role_guest"), "reviewer": t("role_reviewer"), "admin": t("role_admin")}
-                    new_role = st.selectbox(
-                        t("role_label"), options=role_options, index=role_options.index(c["role"]),
-                        format_func=lambda x: role_labels[x], key=f"collab_role_{c['id']}",
-                    )
-                    if new_role != c["role"]:
-                        update_collaborator_role(test_id, c["email"], new_role)
-                        st.rerun()
-                with col_del:
-                    if st.button("🗑️", key=f"del_collab_{c['id']}"):
-                        remove_collaborator(test_id, c["email"])
-                        st.success(t("collaborator_removed"))
-                        st.rerun()
-
-        st.write(t("invite_user"))
-        col_inv_email, col_inv_role, col_inv_btn = st.columns([3, 2, 1])
-        with col_inv_email:
-            inv_email = st.text_input(t("email_placeholder"), key="invite_email", label_visibility="collapsed", placeholder=t("email_placeholder"))
-        with col_inv_role:
-            inv_role_options = ["student", "guest", "reviewer", "admin"]
-            inv_role_labels = {"student": t("role_student"), "guest": t("role_guest"), "reviewer": t("role_reviewer"), "admin": t("role_admin")}
-            inv_role = st.selectbox(t("role_label"), options=inv_role_options, format_func=lambda x: inv_role_labels[x], key="invite_role", label_visibility="collapsed")
-        with col_inv_btn:
-            if st.button(t("invite_btn"), type="secondary"):
-                if not inv_email.strip():
-                    st.warning(t("email_required"))
-                elif inv_email.strip() == st.session_state.get("username"):
-                    st.warning(t("cannot_invite_self"))
-                else:
-                    add_collaborator(test_id, inv_email.strip(), inv_role)
-                    st.success(t("invitation_sent"))
-                    st.rerun()
 
     st.divider()
 
