@@ -604,8 +604,9 @@ def _generate_topics_from_transcript(transcript_text, existing_tags=None):
         return []
 
 
-@st.dialog(t("generate_topics_title"), width="large")
-def _show_generate_topics_dialog(test_id, transcript_text, existing_tags):
+def _show_generate_topics_inline(test_id, transcript_text, existing_tags, material_id):
+    """Inline topic generator (replaces broken @st.dialog)."""
+    st.subheader(t("generate_topics_title"))
     if "generated_topics" not in st.session_state:
         with st.spinner(t("generating_topics")):
             suggestions = _generate_topics_from_transcript(transcript_text, existing_tags)
@@ -618,7 +619,7 @@ def _show_generate_topics_dialog(test_id, transcript_text, existing_tags):
         t("topics"),
         value="\n".join(topics),
         height=300,
-        key="gen_topics_editor",
+        key=f"gen_topics_editor_{material_id}",
     )
 
     existing_set = {t_name.strip().lower() for t_name in existing_tags}
@@ -629,19 +630,23 @@ def _show_generate_topics_dialog(test_id, transcript_text, existing_tags):
 
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
-        if st.button(t("confirm"), type="primary", key="confirm_gen_topics"):
+        if st.button(t("confirm"), type="primary", key=f"confirm_gen_topics_{material_id}"):
             added = 0
             for topic_name in new_topics:
                 if topic_name.strip().lower() not in existing_set:
                     add_test_tag(test_id, topic_name.strip())
                     existing_set.add(topic_name.strip().lower())
                     added += 1
-            del st.session_state["generated_topics"]
+            if "generated_topics" in st.session_state:
+                del st.session_state["generated_topics"]
+            st.session_state[f"_show_gen_topics_{material_id}"] = False
             st.success(t("topics_added", n=added))
             st.rerun()
     with col_cancel:
-        if st.button(t("cancel"), key="cancel_gen_topics"):
-            del st.session_state["generated_topics"]
+        if st.button(t("cancel"), key=f"cancel_gen_topics_{material_id}"):
+            if "generated_topics" in st.session_state:
+                del st.session_state["generated_topics"]
+            st.session_state[f"_show_gen_topics_{material_id}"] = False
             st.rerun()
 
 
@@ -727,22 +732,24 @@ def _generate_questions_from_transcript(transcript_text, num_questions=5):
     return all_questions
 
 
-@st.dialog(t("generate_questions_title"), width="large")
-def _show_generate_questions_dialog(test_id, material_id, transcript_text):
+def _show_generate_questions_inline(test_id, material_id, transcript_text):
+    """Inline question generator (replaces broken @st.dialog)."""
+    st.subheader(t("generate_questions_title"))
     # Step 1: Ask how many questions to generate
     if "generated_questions" not in st.session_state:
         st.write(t("how_many_questions"))
-        num_questions = st.slider("", min_value=1, max_value=500, value=5, key="gen_q_count")
+        num_questions = st.slider("", min_value=1, max_value=500, value=5, key=f"gen_q_count_{material_id}")
 
         col_gen, col_cancel = st.columns(2)
         with col_gen:
-            if st.button(t("generate_btn"), type="primary", key="start_gen_questions"):
+            if st.button(t("generate_btn"), type="primary", key=f"start_gen_questions_{material_id}"):
                 with st.spinner(t("generating_questions")):
                     questions = _generate_questions_from_transcript(transcript_text, num_questions=num_questions)
                 st.session_state.generated_questions = questions
-                st.rerun(scope="fragment")
+                st.rerun()
         with col_cancel:
-            if st.button(t("cancel"), key="cancel_gen_questions_step1"):
+            if st.button(t("cancel"), key=f"cancel_gen_questions_step1_{material_id}"):
+                st.session_state[f"_show_gen_questions_{material_id}"] = False
                 st.rerun()
         return
 
@@ -750,9 +757,10 @@ def _show_generate_questions_dialog(test_id, material_id, transcript_text):
     questions = st.session_state.generated_questions
     if not questions:
         st.warning(t("no_questions_generated"))
-        if st.button(t("cancel"), key="cancel_gen_questions_empty"):
+        if st.button(t("cancel"), key=f"cancel_gen_questions_empty_{material_id}"):
             if "generated_questions" in st.session_state:
                 del st.session_state["generated_questions"]
+            st.session_state[f"_show_gen_questions_{material_id}"] = False
             st.rerun()
         return
 
@@ -767,10 +775,9 @@ def _show_generate_questions_dialog(test_id, material_id, transcript_text):
         if time_start and time_end:
             time_label = f" ({time_start} - {time_end})"
         with st.expander(f"**{i+1}. {q.get('question', '')}**{time_label}", expanded=True):
-            include = st.checkbox(t("include_question"), value=True, key=f"include_q_{i}")
+            include = st.checkbox(t("include_question"), value=True, key=f"include_q_{material_id}_{i}")
             if include:
                 selected.append(i)
-            # Show time range if available
             if time_start and time_end:
                 st.caption(t("video_time_range", start=time_start, end=time_end))
             st.write(f"**{t('options')}:**")
@@ -784,13 +791,12 @@ def _show_generate_questions_dialog(test_id, material_id, transcript_text):
 
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
-        if st.button(t("confirm"), type="primary", key="confirm_gen_questions"):
+        if st.button(t("confirm"), type="primary", key=f"confirm_gen_questions_{material_id}"):
             added = 0
             next_num = get_next_question_num(test_id)
             for i in selected:
                 q = questions[i]
                 opts = q.get("options", [t("option_a"), t("option_b"), t("option_c"), t("option_d")])
-                # Clean option prefixes like "A) " if present
                 clean_opts = []
                 for opt in opts:
                     opt_clean = opt.strip()
@@ -805,18 +811,20 @@ def _show_generate_questions_dialog(test_id, material_id, transcript_text):
                     q.get("explanation", ""),
                     source=f"material:{material_id}",
                 )
-                # Link question to material with time range as context
                 time_start = q.get("time_start", "")
                 time_end = q.get("time_end", "")
                 context = f"{time_start}-{time_end}" if time_start and time_end else ""
                 set_question_material_links(q_id, [{"material_id": material_id, "context": context}])
                 added += 1
             del st.session_state["generated_questions"]
+            st.session_state[f"_show_gen_questions_{material_id}"] = False
             st.success(t("questions_added", n=added))
             st.rerun()
     with col_cancel:
-        if st.button(t("cancel"), key="cancel_gen_questions"):
-            del st.session_state["generated_questions"]
+        if st.button(t("cancel"), key=f"cancel_gen_questions_{material_id}"):
+            if "generated_questions" in st.session_state:
+                del st.session_state["generated_questions"]
+            st.session_state[f"_show_gen_questions_{material_id}"] = False
             st.rerun()
 
 
@@ -949,9 +957,8 @@ def _render_material_refs(question_db_id, test_id):
         st.caption(t("material_references") + ": " + " · ".join(refs), unsafe_allow_html=True)
 
 
-@st.dialog("📎", width="large")
-def _show_material_dialog(mat, label):
-    """Show material content in a dialog."""
+def _show_material_inline(mat, label):
+    """Inline material viewer (replaces broken @st.dialog)."""
     st.subheader(label)
     if mat["material_type"] == "youtube" and mat["url"]:
         st.video(mat["url"])
@@ -1005,12 +1012,11 @@ pdfjsLib.getDocument({{data: uint8}}).promise.then(function(pdf) {{
             t("download"),
             data=mat["file_data"],
             file_name=f"{label}.pdf",
-            key="dialog_dl_pdf",
+            key=f"dl_pdf_{mat['id']}",
         )
     else:
         st.write(t("no_preview"))
-    if st.button(t("close"), key="close_mat_dialog", width="stretch"):
-        # Clear all show_mat flags
+    if st.button(t("close"), key=f"close_mat_{mat['id']}", width="stretch"):
         for k in list(st.session_state.keys()):
             if k.startswith("show_mat_"):
                 del st.session_state[k]
@@ -1039,9 +1045,11 @@ def _show_study_dialog(mat, label, questions):
     q_db_ids = [q["db_id"] for q in questions]
     all_links = get_question_material_links_bulk(q_db_ids) if q_db_ids else {}
 
+    current_mat_id = mat.get("id")
     q_data = []
     for q in questions:
         refs = []
+        q_timestamp = -1  # Timestamp in seconds for this question relative to current material
         for lk in all_links.get(q["db_id"], []):
             m = mat_by_id.get(lk["material_id"])
             if not m:
@@ -1051,6 +1059,13 @@ def _show_study_dialog(mat, label, questions):
             title = m["title"] or m["url"] or ""
             ctx = lk.get("context", "")
             url = m.get("url", "")
+            # Extract timestamp if this link is for the current material
+            if lk["material_id"] == current_mat_id and ctx:
+                first_part = ctx.split("-")[0].strip()
+                first_part = first_part.split(",")[0].strip()
+                ts = _time_to_secs(first_part)
+                if ts >= 0:
+                    q_timestamp = ts
             if m["material_type"] == "youtube" and url and ctx:
                 first = ctx.split(",")[0].strip()
                 secs = _time_to_secs(first)
@@ -1063,7 +1078,7 @@ def _show_study_dialog(mat, label, questions):
         q_data.append({
             "question": q["question"], "options": q["options"],
             "answer_index": q["answer_index"], "explanation": q.get("explanation", ""),
-            "tag": q.get("tag", ""), "refs": refs,
+            "tag": q.get("tag", ""), "refs": refs, "ts": q_timestamp,
         })
     q_json = _json.dumps(q_data, ensure_ascii=False)
 
@@ -1095,30 +1110,35 @@ body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 #quiz-overlay {{
   display:none; position:absolute; top:0; left:0; width:100%; height:100%;
   background:rgba(14,17,23,0.95); z-index:10;
-  display:none; flex-direction:column; justify-content:center; padding:24px; box-sizing:border-box;
-  overflow-y:auto;
+  flex-direction:column; padding:0; box-sizing:border-box;
 }}
 #quiz-overlay.active {{ display:flex; }}
-#quiz-overlay h3 {{ margin:0 0 6px; font-size:1.1em; }}
-#quiz-overlay .tag {{ color:#888; font-size:0.85em; margin-bottom:16px; }}
+#quiz-content {{
+  flex:1; overflow-y:auto; padding:16px 16px 8px;
+}}
+#quiz-content h3 {{ margin:0 0 6px; font-size:1.1em; }}
+#quiz-content .tag {{ color:#888; font-size:0.85em; margin-bottom:12px; }}
+#btn-area {{
+  flex-shrink:0; padding:8px 16px 12px;
+}}
 .opt-btn {{
-  display:block; width:100%; padding:10px 16px; margin:4px 0; border:1px solid #444;
-  border-radius:8px; background:#1a1d24; color:#fafafa; font-size:0.95em;
+  display:block; width:100%; padding:8px 12px; margin:3px 0; border:1px solid #444;
+  border-radius:8px; background:#1a1d24; color:#fafafa; font-size:0.9em;
   cursor:pointer; text-align:left;
 }}
 .opt-btn:hover {{ background:#262a33; }}
 .opt-btn.correct {{ background:#1b5e20; border-color:#4caf50; cursor:default; }}
 .opt-btn.wrong {{ background:#b71c1c; border-color:#f44336; cursor:default; }}
 .opt-btn.dimmed {{ opacity:0.5; cursor:default; }}
-.result {{ margin:12px 0; padding:8px 12px; border-radius:6px; font-weight:bold; }}
+.result {{ margin:8px 0; padding:6px 10px; border-radius:6px; font-weight:bold; font-size:0.9em; }}
 .result.ok {{ background:#1b5e20; }}
 .result.fail {{ background:#b71c1c; }}
-.explanation {{ margin:8px 0; padding:10px 12px; background:#1a2733; border-radius:6px; font-size:0.9em; }}
-#refs-area {{ margin:8px 0; padding:10px 12px; background:#1a2733; border-radius:6px; font-size:0.85em; }}
+.explanation {{ margin:6px 0; padding:8px 10px; background:#1a2733; border-radius:6px; font-size:0.85em; }}
+#refs-area {{ margin:6px 0; padding:8px 10px; background:#1a2733; border-radius:6px; font-size:0.8em; }}
 #countdown {{ position:absolute; top:8px; right:12px; background:rgba(0,0,0,0.7); color:#fff;
   padding:4px 10px; border-radius:12px; font-size:0.85em; z-index:5; }}
 .continue-btn {{
-  display:block; width:100%; padding:12px 16px; margin:16px 0 0; border:none;
+  display:block; width:100%; padding:12px 16px; border:none;
   border-radius:8px; background:#1b6ef3; color:#fff; font-size:1em; font-weight:bold;
   cursor:pointer; text-align:center;
 }}
@@ -1128,7 +1148,10 @@ body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ro
 <div id="player-wrap">
   <div id="player"></div>
   <div id="countdown"></div>
-  <div id="quiz-overlay"></div>
+  <div id="quiz-overlay">
+    <div id="quiz-content"></div>
+    <div id="btn-area"></div>
+  </div>
 </div>
 <script>
 var QUESTIONS = {q_json};
@@ -1145,8 +1168,10 @@ document.head.appendChild(tag);
 var player, timer = null, questionShown = false;
 var stopIdx = 0;
 var questionsRemaining = 0;
+var shownGlobalIds = [];  // tracks global QUESTIONS indices already shown
 // If configured stops exist, use them; otherwise use repeating fallback
 var useConfigured = CONFIGURED_STOPS.length > 0;
+var prevStop = 0;
 var nextStop = useConfigured ? CONFIGURED_STOPS[0].t : FALLBACK_INTERVAL;
 var overlay = document.getElementById('quiz-overlay');
 var countdownEl = document.getElementById('countdown');
@@ -1205,6 +1230,7 @@ function updateCountdown(cur) {{
 }}
 
 function advanceStop() {{
+  prevStop = nextStop;
   if (useConfigured) {{
     stopIdx++;
     if (stopIdx < CONFIGURED_STOPS.length) {{
@@ -1219,14 +1245,51 @@ function advanceStop() {{
 
 function resumeVideo() {{
   overlay.classList.remove('active');
-  overlay.innerHTML = '';
+  document.getElementById('quiz-content').innerHTML = '';
+  document.getElementById('btn-area').innerHTML = '';
   advanceStop();
   questionShown = false;
   player.playVideo();
 }}
 
+function getQuestionsForSegment() {{
+  var currentStop = nextStop >= 0 ? nextStop : Infinity;
+  var filtered = QUESTIONS.filter(function(q) {{
+    if (q.ts < 0) return false;
+    return q.ts >= prevStop && q.ts < currentStop;
+  }});
+  if (filtered.length === 0) {{
+    filtered = QUESTIONS.filter(function(q) {{ return q.ts >= 0; }});
+  }}
+  if (filtered.length === 0) {{
+    filtered = QUESTIONS;
+  }}
+  return filtered;
+}}
+
 function showQuestion() {{
-  var q = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
+  var contentArea = document.getElementById('quiz-content');
+  var btnArea = document.getElementById('btn-area');
+  var available = getQuestionsForSegment();
+  // Build list of global indices for the segment questions
+  var availableGlobal = available.map(function(q) {{ return QUESTIONS.indexOf(q); }});
+  // Filter to unseen questions (not yet shown in this session)
+  var unseenIndices = [];
+  for (var i = 0; i < available.length; i++) {{
+    if (shownGlobalIds.indexOf(availableGlobal[i]) === -1) {{
+      unseenIndices.push(i);
+    }}
+  }}
+  // If all segment questions were shown, reset globally and retry
+  if (unseenIndices.length === 0) {{
+    shownGlobalIds = [];
+    for (var i = 0; i < available.length; i++) {{ unseenIndices.push(i); }}
+  }}
+  // Pick a random unseen question
+  var pick = unseenIndices[Math.floor(Math.random() * unseenIndices.length)];
+  var q = available[pick];
+  shownGlobalIds.push(availableGlobal[pick]);
+
   var html = '<h3>' + escHtml(q.question) + '</h3>';
   html += '<div class="tag">' + escHtml(q.tag.replace(/_/g, ' ')) + '</div>';
   for (var i = 0; i < q.options.length; i++) {{
@@ -1250,14 +1313,15 @@ function showQuestion() {{
     }}
     html += parts.join(' &middot; ') + '</div>';
   }}
-  overlay.innerHTML = html;
+  contentArea.innerHTML = html;
+  btnArea.innerHTML = '';
   overlay.classList.add('active');
 
-  overlay.querySelectorAll('.opt-btn').forEach(function(btn) {{
+  contentArea.querySelectorAll('.opt-btn').forEach(function(btn) {{
     btn.addEventListener('click', function() {{
       var idx = parseInt(this.dataset.idx);
       var correct = parseInt(this.dataset.correct);
-      var buttons = overlay.querySelectorAll('.opt-btn');
+      var buttons = contentArea.querySelectorAll('.opt-btn');
       buttons.forEach(function(b) {{
         var bi = parseInt(b.dataset.idx);
         if (bi === correct) b.classList.add('correct');
@@ -1289,7 +1353,7 @@ function showQuestion() {{
           resumeVideo();
         }});
       }}
-      overlay.appendChild(continueBtn);
+      btnArea.appendChild(continueBtn);
     }});
   }});
 }}
@@ -1479,11 +1543,11 @@ def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_m
                     )
 
 
-@st.dialog(t("import_test"))
-def _import_test_dialog():
-    """Dialog for importing a test from JSON file."""
+def _show_import_test_inline():
+    """Inline test importer (replaces broken @st.dialog)."""
     import json as json_module
 
+    st.subheader(t("import_test"))
     st.write(t("import_test_desc"))
 
     uploaded_file = st.file_uploader(t("select_json_file"), type=["json"], key="import_test_file")
@@ -1505,93 +1569,101 @@ def _import_test_dialog():
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button(t("import"), type="primary", width="stretch"):
+                if st.button(t("import"), type="primary", width="stretch", key="import_test_confirm"):
                     try:
                         test_id, title = import_test_from_json(st.session_state.user_id, json_data)
                         st.session_state.import_success = t("test_imported", title=title)
+                        st.session_state["_show_import_test"] = False
                         st.rerun()
                     except ValueError as e:
                         st.error(str(e))
                     except Exception as e:
                         st.error(t("import_error", error=str(e)))
             with col2:
-                if st.button(t("cancel"), width="stretch"):
+                if st.button(t("cancel"), width="stretch", key="import_test_cancel"):
+                    st.session_state["_show_import_test"] = False
                     st.rerun()
         except json_module.JSONDecodeError:
             st.error(t("invalid_json"))
+    else:
+        if st.button(t("cancel"), key="import_test_cancel_no_file"):
+            st.session_state["_show_import_test"] = False
+            st.rerun()
 
 
-def _import_questions_dialog(test_id, materials):
-    """Dialog for importing questions from a JSON file."""
+def _show_import_questions_inline(test_id, materials):
+    """Inline question importer (replaces broken @st.dialog)."""
     import json as json_module
 
-    @st.dialog(t("import_questions"))
-    def _dialog():
-        st.write(t("import_questions_desc"))
+    st.subheader(t("import_questions"))
+    st.write(t("import_questions_desc"))
 
-        # Material selection
-        material_options = [(0, t("no_material"))]
-        for mat in materials:
-            label = mat.get("title") or mat.get("url") or f"Material #{mat['id']}"
-            material_options.append((mat["id"], label))
+    # Material selection
+    material_options = [(0, t("no_material"))]
+    for mat in materials:
+        label = mat.get("title") or mat.get("url") or f"Material #{mat['id']}"
+        material_options.append((mat["id"], label))
 
-        selected_mat = st.selectbox(
-            t("associate_material"),
-            options=[opt[0] for opt in material_options],
-            format_func=lambda x: next((opt[1] for opt in material_options if opt[0] == x), ""),
-            key="import_q_material"
-        )
+    selected_mat = st.selectbox(
+        t("associate_material"),
+        options=[opt[0] for opt in material_options],
+        format_func=lambda x: next((opt[1] for opt in material_options if opt[0] == x), ""),
+        key="import_q_material"
+    )
 
-        uploaded_file = st.file_uploader(t("select_json_file"), type=["json"], key="import_questions_file")
+    uploaded_file = st.file_uploader(t("select_json_file"), type=["json"], key="import_questions_file")
 
-        if uploaded_file is not None:
-            try:
-                content = uploaded_file.read().decode("utf-8")
-                json_data = json_module.loads(content)
+    if uploaded_file is not None:
+        try:
+            content = uploaded_file.read().decode("utf-8")
+            json_data = json_module.loads(content)
 
-                # Extract questions array
-                if isinstance(json_data, dict):
-                    questions_list = json_data.get("questions", [])
-                elif isinstance(json_data, list):
-                    questions_list = json_data
-                else:
-                    questions_list = []
+            # Extract questions array
+            if isinstance(json_data, dict):
+                questions_list = json_data.get("questions", [])
+            elif isinstance(json_data, list):
+                questions_list = json_data
+            else:
+                questions_list = []
 
-                if not questions_list:
-                    st.warning(t("no_questions_in_file"))
-                    return
+            if not questions_list:
+                st.warning(t("no_questions_in_file"))
+                return
 
-                st.caption(t("n_questions", n=len(questions_list)))
+            st.caption(t("n_questions", n=len(questions_list)))
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(t("import"), type="primary", width="stretch"):
-                        next_num = get_next_question_num(test_id)
-                        imported_count = 0
-                        for i, q in enumerate(questions_list):
-                            q_id = add_question(
-                                test_id,
-                                next_num + i,
-                                q.get("tag", "general"),
-                                q.get("question", ""),
-                                q.get("options", []),
-                                q.get("answer_index", 0),
-                                q.get("explanation", ""),
-                                source="json_import"
-                            )
-                            # Link to material if selected
-                            if selected_mat and selected_mat != 0:
-                                set_question_material_links(q_id, [{"material_id": selected_mat, "context": ""}])
-                            imported_count += 1
-                        st.session_state.import_q_success = t("questions_imported", n=imported_count)
-                        st.rerun()
-                with col2:
-                    if st.button(t("cancel"), width="stretch"):
-                        st.rerun()
-            except json_module.JSONDecodeError:
-                st.error(t("invalid_json"))
-
-    _dialog()
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(t("import"), type="primary", width="stretch", key="import_q_confirm"):
+                    next_num = get_next_question_num(test_id)
+                    imported_count = 0
+                    for i, q in enumerate(questions_list):
+                        q_id = add_question(
+                            test_id,
+                            next_num + i,
+                            q.get("tag", "general"),
+                            q.get("question", ""),
+                            q.get("options", []),
+                            q.get("answer_index", 0),
+                            q.get("explanation", ""),
+                            source="json_import"
+                        )
+                        if selected_mat and selected_mat != 0:
+                            set_question_material_links(q_id, [{"material_id": selected_mat, "context": ""}])
+                        imported_count += 1
+                    st.session_state.import_q_success = t("questions_imported", n=imported_count)
+                    st.session_state["_show_import_questions"] = False
+                    st.rerun()
+            with col2:
+                if st.button(t("cancel"), width="stretch", key="import_q_cancel"):
+                    st.session_state["_show_import_questions"] = False
+                    st.rerun()
+        except json_module.JSONDecodeError:
+            st.error(t("invalid_json"))
+    else:
+        if st.button(t("cancel"), key="import_q_cancel_no_file"):
+            st.session_state["_show_import_questions"] = False
+            st.rerun()
 
 
 def _get_legal_file_path(doc_type, lang):
@@ -1915,7 +1987,8 @@ def show_test_catalog():
                     st.rerun()
         with col_import:
             if st.button(t("import_test"), type="secondary", width="stretch"):
-                _import_test_dialog()
+                st.session_state["_show_import_test"] = not st.session_state.get("_show_import_test", False)
+                st.rerun()
         with col_bulk:
             if all_tests:
                 bulk_delete_mode = st.toggle(t("bulk_delete_mode"), key="test_bulk_delete_mode")
@@ -1926,6 +1999,11 @@ def show_test_catalog():
         if st.button(t("create_test"), type="secondary"):
             st.session_state.page = "Crear Test"
             st.rerun()
+
+    # Show inline import test form when toggled
+    if st.session_state.get("_show_import_test", False):
+        with st.container(border=True):
+            _show_import_test_inline()
 
     if not all_tests:
         st.info(t("no_tests"))
@@ -2134,11 +2212,12 @@ def show_test_config():
                     else:
                         st.button("🧠", key=f"study_mat_{mat['id']}", disabled=True, help=t("tooltip_study_with_questions"))
 
-            # Render dialog for the active material (only one at a time)
+            # Render inline viewer for the active material (only one at a time)
             for mat in materials:
                 if st.session_state.get(f"show_mat_{mat['id']}"):
                     label = mat["title"] or mat["url"] or t("no_title")
-                    _show_material_dialog(mat, label)
+                    with st.container(border=True):
+                        _show_material_inline(mat, label)
                     break
 
             # Render study dialog if active
@@ -3201,16 +3280,17 @@ def show_test_editor():
                         update_test_material(mat["id"], new_title.strip(), new_url.strip())
                         st.rerun()
                 with cols[1]:
+                    gen_q_key = f"_show_gen_questions_{mat['id']}"
                     if st.button(t("generate"), key=f"gen_mat_{mat['id']}"):
                         if is_yt:
-                            # For YouTube, use AI to generate questions from transcript
                             transcript_text = mat.get("transcript", "")
                             if not transcript_text:
                                 transcript_text = _fetch_youtube_transcript(mat["url"])
                                 if transcript_text:
                                     update_material_transcript(mat["id"], transcript_text)
                             if transcript_text:
-                                _show_generate_questions_dialog(test_id, mat["id"], transcript_text)
+                                st.session_state[gen_q_key] = not st.session_state.get(gen_q_key, False)
+                                st.rerun()
                             else:
                                 st.warning(t("no_transcript"))
                         else:
@@ -3239,6 +3319,7 @@ def show_test_editor():
                             else:
                                 st.warning(t("no_transcript"))
                     with cols[3]:
+                        gen_topics_key = f"_show_gen_topics_{mat['id']}"
                         if st.button(f"🏷️ {t('generate_topics_btn')}", key=f"gen_topics_mat_{mat['id']}"):
                             transcript_text = mat.get("transcript", "")
                             if not transcript_text:
@@ -3246,8 +3327,8 @@ def show_test_editor():
                                 if transcript_text:
                                     update_material_transcript(mat["id"], transcript_text)
                             if transcript_text:
-                                existing_tags = get_test_tags(test_id)
-                                _show_generate_topics_dialog(test_id, transcript_text, existing_tags)
+                                st.session_state[gen_topics_key] = not st.session_state.get(gen_topics_key, False)
+                                st.rerun()
                             else:
                                 st.warning(t("no_transcript"))
                     with cols[4]:
@@ -3264,6 +3345,21 @@ def show_test_editor():
                 if st.session_state.get(f"_show_pause_editor_{mat['id']}", False):
                     with st.container(border=True):
                         _show_pause_time_editor_inline(mat["id"], mat["url"], mat.get("pause_times", ""))
+
+                # Show inline generate topics editor when toggled
+                if st.session_state.get(f"_show_gen_topics_{mat['id']}", False):
+                    transcript_text = mat.get("transcript", "")
+                    if transcript_text:
+                        existing_tags = get_test_tags(test_id)
+                        with st.container(border=True):
+                            _show_generate_topics_inline(test_id, transcript_text, existing_tags, mat["id"])
+
+                # Show inline generate questions editor when toggled
+                if st.session_state.get(f"_show_gen_questions_{mat['id']}", False):
+                    transcript_text = mat.get("transcript", "")
+                    if transcript_text:
+                        with st.container(border=True):
+                            _show_generate_questions_inline(test_id, mat["id"], transcript_text)
 
         st.write(t("add_material_label"))
         mat_type = st.selectbox(t("material_type"), ["pdf", "youtube", "image", "url"],
@@ -3404,12 +3500,18 @@ def show_test_editor():
                     st.rerun()
             with col_import_q:
                 if st.button(t("import_questions"), width="stretch"):
-                    _import_questions_dialog(test_id, materials)
+                    st.session_state["_show_import_questions"] = not st.session_state.get("_show_import_questions", False)
+                    st.rerun()
             with col_bulk_q:
                 q_bulk_delete = st.toggle(t("bulk_delete_mode"), key="q_bulk_delete_mode")
                 if q_bulk_delete:
                     if "bulk_delete_questions" not in st.session_state:
                         st.session_state.bulk_delete_questions = set()
+
+            # Show inline import questions form when toggled
+            if st.session_state.get("_show_import_questions", False):
+                with st.container(border=True):
+                    _show_import_questions_inline(test_id, materials)
 
             if q_bulk_delete and questions:
                 # Select/unselect all + count + delete button
