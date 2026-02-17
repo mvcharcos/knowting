@@ -3855,8 +3855,9 @@ def show_admin_panel():
     st.write(t("total_users", n=len(filtered_users)))
 
     # Role options (student role removed from global roles - only applies at test/program level)
-    role_options = ["knower", "knowter", "admin"]
+    role_options = ["tester", "knower", "knowter", "admin"]
     role_labels = {
+        "tester": t("global_role_tester"),
         "knower": t("global_role_knower"),
         "knowter": t("global_role_knowter"),
         "admin": t("global_role_admin"),
@@ -5128,12 +5129,21 @@ def main():
         st.session_state.page = "Home"
 
     logged_in = _is_logged_in()
+    _is_tester_user = logged_in and _get_global_role() == "tester"
+    _show_full_ui = logged_in and not _is_tester_user
 
-    # Top bar: title + avatar/login
-    col_title, col_avatar = st.columns([6, 1])
-    with col_title:
-        st.title("Knowting")
-        st.subheader(f"*{t('tagline')}*")
+    # Redirect tester/non-logged-in users away from Home to Tests
+    if st.session_state.page == "Home" and not _show_full_ui:
+        st.session_state.page = "Tests"
+
+    # Top bar: title + avatar/login (hidden for non-logged-in and tester users)
+    if _show_full_ui:
+        col_title, col_avatar = st.columns([6, 1])
+        with col_title:
+            st.title("Knowting")
+            st.subheader(f"*{t('tagline')}*")
+    else:
+        col_avatar = st.columns([1])[0]
     with col_avatar:
         if logged_in:
             avatar_bytes = st.session_state.get("avatar_bytes")
@@ -5166,27 +5176,35 @@ def main():
                     st.rerun()
 
     # Sidebar navigation
+    is_tester = logged_in and _get_global_role() == "tester"
+    show_full_ui = logged_in and not is_tester
     with st.sidebar:
-        # Logo
-        st.image("assets/KnowtingLogo.png", use_container_width=True)
+        # Logo - hidden for non-logged-in and tester users
+        if show_full_ui:
+            st.image("assets/KnowtingLogo.png", use_container_width=True)
 
-        # Language toggle
-        current_lang = st.session_state.get("lang", "es")
-        current_idx = UI_LANGUAGES.index(current_lang) if current_lang in UI_LANGUAGES else 0
-        selected_ui_lang = st.selectbox(
-            "🌐", options=UI_LANGUAGES,
-            index=current_idx,
-            format_func=lambda x: UI_LANG_LABELS.get(x, x),
-            key="lang_toggle",
-            label_visibility="collapsed",
-        )
-        if selected_ui_lang != current_lang:
-            st.session_state.lang = selected_ui_lang
-            st.rerun()
+        # Language toggle - hidden for non-logged-in and tester users
+        if show_full_ui:
+            current_lang = st.session_state.get("lang", "es")
+            current_idx = UI_LANGUAGES.index(current_lang) if current_lang in UI_LANGUAGES else 0
+            selected_ui_lang = st.selectbox(
+                "🌐", options=UI_LANGUAGES,
+                index=current_idx,
+                format_func=lambda x: UI_LANG_LABELS.get(x, x),
+                key="lang_toggle",
+                label_visibility="collapsed",
+            )
+            if selected_ui_lang != current_lang:
+                st.session_state.lang = selected_ui_lang
+                st.rerun()
 
         st.markdown("---")
-        nav_items = [("🏠", "Home", t("home")), ("📝", "Tests", t("tests"))]
-        if logged_in:
+        nav_items = []
+        # Home - hidden for non-logged-in and tester users
+        if show_full_ui:
+            nav_items.append(("🏠", "Home", t("home")))
+        nav_items.append(("📝", "Tests", t("tests")))
+        if show_full_ui:
             nav_items.append(("📊", "Dashboard", t("dashboard")))
             nav_items.append(("📚", "Cursos", t("courses")))
         if logged_in and _is_global_admin():
