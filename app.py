@@ -230,16 +230,14 @@ def _mmss_to_seconds(mmss):
     return None
 
 
-@st.dialog(t("pause_time_selector_title"), width="large")
-def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_times):
+def _show_pause_time_editor_inline(material_id, youtube_url, current_pause_times):
+    """Inline pause time editor (replaces broken @st.dialog)."""
     import json as _json
 
-    # Use material-specific session state key to avoid conflicts
     state_key = f"editing_pause_times_{material_id}"
 
-    # Always re-initialize from database when dialog opens with fresh data
+    # Initialize from database on first open
     if state_key not in st.session_state or st.session_state.get("_pause_dialog_mat_id") != material_id:
-        # Parse existing pause times from database
         pause_list = []
         if current_pause_times:
             try:
@@ -253,144 +251,81 @@ def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_tim
 
     pause_times = st.session_state[state_key]
 
+    st.subheader(t("pause_time_selector_title"))
+
     # Embed YouTube video with time capture capability
     video_id = _extract_youtube_id(youtube_url)
     if video_id:
-        # Custom HTML with YouTube IFrame API for time capture
         video_html = f'''
         <style>
             #player-container {{ width: 100%; }}
             #capture-btn {{
-                background-color: #ff4b4b;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                font-size: 16px;
-                border-radius: 8px;
-                cursor: pointer;
-                margin-top: 10px;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                transition: all 0.2s;
+                background-color: #ff4b4b; color: white; border: none;
+                padding: 12px 24px; font-size: 16px; border-radius: 8px;
+                cursor: pointer; margin-top: 10px;
+                display: inline-flex; align-items: center; gap: 8px;
             }}
-            #capture-btn:hover {{
-                background-color: #ff3333;
-                transform: scale(1.02);
-            }}
+            #capture-btn:hover {{ background-color: #ff3333; }}
             #time-display {{
-                display: inline-block;
-                font-size: 24px;
-                font-weight: bold;
-                color: #333;
-                font-family: monospace;
-                background: #f0f2f6;
-                padding: 10px 20px;
-                border-radius: 8px;
-                min-width: 80px;
-                text-align: center;
+                display: inline-block; font-size: 24px; font-weight: bold;
+                color: #333; font-family: monospace; background: #f0f2f6;
+                padding: 10px 20px; border-radius: 8px; min-width: 80px; text-align: center;
             }}
-            #capture-controls {{
-                margin-top: 12px;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
-            }}
-            #questions-input {{
-                width: 60px;
-                padding: 8px 12px;
-                font-size: 16px;
-                border: 2px solid #ddd;
-                border-radius: 8px;
-                text-align: center;
-            }}
-            #questions-label {{
-                color: #666;
-                font-size: 14px;
-            }}
+            #capture-controls {{ margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
             #adding-feedback {{
-                background: #d4edda;
-                border: 2px solid #28a745;
-                color: #155724;
-                padding: 8px 16px;
-                border-radius: 8px;
-                font-size: 16px;
-                display: none;
-                margin-top: 10px;
-                text-align: center;
+                background: #d4edda; border: 2px solid #28a745; color: #155724;
+                padding: 8px 16px; border-radius: 8px; font-size: 16px;
+                display: none; margin-top: 10px; text-align: center;
             }}
-            #captured-time-display {{
-                font-size: 28px;
-                font-weight: bold;
-                font-family: monospace;
-            }}
+            #captured-time-display {{ font-size: 28px; font-weight: bold; font-family: monospace; }}
         </style>
         <div id="player-container">
             <div id="player"></div>
             <div id="capture-controls">
                 <button id="capture-btn" onclick="captureTime()">⏱️ {t("mark_pause_time")}</button>
                 <span id="time-display">0:00</span>
-                <span id="questions-label">{t("questions_at_pause")}</span>
-                <input type="number" id="questions-input" value="1" min="1" max="10">
             </div>
             <div id="adding-feedback">
                 ✓ <span id="captured-time-display"></span> {t("copied")}! → {t("paste_below")}
             </div>
         </div>
         <script>
-            var player;
-            var timeUpdateInterval;
-            var materialId = {material_id};
-
+            var player; var timeUpdateInterval;
             var tag = document.createElement('script');
             tag.src = "https://www.youtube.com/iframe_api";
             var firstScriptTag = document.getElementsByTagName('script')[0];
             firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-
             function onYouTubeIframeAPIReady() {{
                 player = new YT.Player('player', {{
-                    height: '315',
-                    width: '100%',
-                    videoId: '{video_id}',
+                    height: '315', width: '100%', videoId: '{video_id}',
                     playerVars: {{ 'playsinline': 1, 'rel': 0 }},
                     events: {{ 'onReady': onPlayerReady }}
                 }});
             }}
-
             function onPlayerReady(event) {{
                 updateTimeDisplay();
                 timeUpdateInterval = setInterval(updateTimeDisplay, 500);
             }}
-
             function formatTime(seconds) {{
                 var mins = Math.floor(seconds / 60);
                 var secs = seconds % 60;
                 return mins + ":" + (secs < 10 ? "0" : "") + secs;
             }}
-
             function updateTimeDisplay() {{
                 if (player && player.getCurrentTime) {{
                     var seconds = Math.floor(player.getCurrentTime());
                     document.getElementById('time-display').textContent = formatTime(seconds);
                 }}
             }}
-
             function captureTime() {{
                 if (player && player.getCurrentTime) {{
                     var seconds = Math.floor(player.getCurrentTime());
-                    var numQuestions = parseInt(document.getElementById('questions-input').value) || 1;
                     player.pauseVideo();
-
                     var timeStr = formatTime(seconds);
-
-                    // Copy to clipboard
                     navigator.clipboard.writeText(timeStr).then(function() {{
-                        // Show feedback with captured time
                         document.getElementById('captured-time-display').textContent = timeStr;
                         document.getElementById('adding-feedback').style.display = 'block';
                     }}).catch(function() {{
-                        // Clipboard failed, still show the time
                         document.getElementById('captured-time-display').textContent = timeStr;
                         document.getElementById('adding-feedback').style.display = 'block';
                     }});
@@ -399,18 +334,16 @@ def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_tim
         </script>
         '''
         st.components.v1.html(video_html, height=460)
-    else:
-        st.warning(t("no_transcript"))
 
-    # Manual time entry - shown prominently for paste workflow
+    # Manual time entry
     col_time, col_questions, col_add = st.columns([3, 2, 2])
     with col_time:
-        new_time = st.text_input(t("time_mmss"), placeholder="0:00", key="new_pause_time_input")
+        new_time = st.text_input(t("time_mmss"), placeholder="0:00", key=f"pause_time_input_{material_id}")
     with col_questions:
-        new_q_count = st.number_input(t("num_questions"), min_value=1, max_value=10, value=1, key="new_pause_q_count")
+        new_q_count = st.number_input(t("num_questions"), min_value=1, max_value=10, value=1, key=f"pause_q_count_{material_id}")
     with col_add:
-        st.write("")  # Spacing to align button
-        if st.button(f"➕ {t('add_time')}", key="add_pause_time_btn", type="primary", use_container_width=True):
+        st.write("")
+        if st.button(f"➕ {t('add_time')}", key=f"add_pause_time_{material_id}", type="primary"):
             seconds = _mmss_to_seconds(new_time)
             if seconds is not None:
                 existing_times = [p["t"] for p in pause_times]
@@ -418,17 +351,14 @@ def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_tim
                     pause_times.append({"t": seconds, "n": new_q_count})
                     pause_times.sort(key=lambda x: x["t"])
                     st.session_state[state_key] = pause_times
-                    st.rerun(scope="fragment")  # Keep dialog open
+                    st.rerun()
+                else:
+                    st.warning(t("time_already_exists"))
             else:
-                st.warning(t("invalid_time_format") if "invalid_time_format" in dir() else "Invalid time format")
-
-    st.divider()
+                st.warning(t("invalid_time_format"))
 
     # Display marked pause times
-    st.subheader(t("marked_pause_times"))
-    if not pause_times:
-        st.info(t("no_pause_times"))
-    else:
+    if pause_times:
         for i, pt in enumerate(pause_times):
             col_display, col_q, col_del = st.columns([2, 2, 1])
             with col_display:
@@ -447,115 +377,71 @@ def _show_pause_time_selector_dialog(material_id, youtube_url, current_pause_tim
                 if st.button("🗑️", key=f"del_pause_{material_id}_{i}"):
                     pause_times.pop(i)
                     st.session_state[state_key] = pause_times
-                    st.rerun(scope="fragment")  # Keep dialog open
-
-    st.divider()
+                    st.rerun()
+    else:
+        st.info(t("no_pause_times"))
 
     # Save and cancel buttons
     col_save, col_cancel = st.columns(2)
     with col_save:
-        if st.button(t("save_pause_times"), type="primary", key="save_pause_times_btn"):
-            # Convert to JSON format
+        if st.button(t("save_pause_times"), type="primary", key=f"save_pause_{material_id}"):
             pause_json = _json.dumps(pause_times) if pause_times else ""
             update_material_pause_times(material_id, pause_json)
-            # Update the text input widget state so it reflects new value
             widget_key = f"edit_mat_pause_{material_id}"
             st.session_state[widget_key] = _format_pause_times(pause_json)
             if state_key in st.session_state:
                 del st.session_state[state_key]
             if "_pause_dialog_mat_id" in st.session_state:
                 del st.session_state["_pause_dialog_mat_id"]
+            st.session_state.pop(f"_show_pause_editor_{material_id}", None)
             st.success(t("pause_times_saved"))
             st.rerun()
     with col_cancel:
-        if st.button(t("cancel"), key="cancel_pause_times_btn"):
+        if st.button(t("cancel"), key=f"cancel_pause_{material_id}"):
             if state_key in st.session_state:
                 del st.session_state[state_key]
             if "_pause_dialog_mat_id" in st.session_state:
                 del st.session_state["_pause_dialog_mat_id"]
+            st.session_state.pop(f"_show_pause_editor_{material_id}", None)
             st.rerun()
 
 
-@st.dialog(t("pause_time_selector_title"), width="large")
-def _show_new_material_pause_time_dialog(youtube_url):
-    """Dialog to set pause times for a new material before it's created."""
+def _show_new_material_pause_time_inline(youtube_url):
+    """Inline pause time editor for new materials (replaces broken @st.dialog)."""
     import json as _json
 
-    # Initialize session state for pause times
     if "new_material_editing_pause_times" not in st.session_state:
         st.session_state.new_material_editing_pause_times = []
 
     pause_times = st.session_state.new_material_editing_pause_times
 
-    # Embed YouTube video with time capture capability
+    st.subheader(t("pause_time_selector_title"))
+
     video_id = _extract_youtube_id(youtube_url)
     if video_id:
         video_html = f'''
         <style>
             #player-container {{ width: 100%; }}
             #capture-btn {{
-                background-color: #ff4b4b;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                font-size: 16px;
-                border-radius: 8px;
-                cursor: pointer;
-                margin-top: 10px;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                transition: all 0.2s;
+                background-color: #ff4b4b; color: white; border: none;
+                padding: 12px 24px; font-size: 16px; border-radius: 8px;
+                cursor: pointer; margin-top: 10px;
+                display: inline-flex; align-items: center; gap: 8px;
             }}
-            #capture-btn:hover {{
-                background-color: #ff3333;
-                transform: scale(1.02);
-            }}
+            #capture-btn:hover {{ background-color: #ff3333; }}
             #time-display {{
-                display: inline-block;
-                font-size: 24px;
-                font-weight: bold;
-                color: #333;
-                font-family: monospace;
-                background: #f0f2f6;
-                padding: 10px 20px;
-                border-radius: 8px;
-                min-width: 80px;
-                text-align: center;
+                display: inline-block; font-size: 24px; font-weight: bold;
+                color: #333; font-family: monospace; background: #f0f2f6;
+                padding: 10px 20px; border-radius: 8px; min-width: 80px; text-align: center;
             }}
-            #capture-controls {{
-                margin-top: 12px;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
-            }}
+            #capture-controls {{ margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
             #captured-box {{
-                background: #d4edda;
-                border: 2px solid #28a745;
-                border-radius: 12px;
-                padding: 15px 20px;
-                margin-top: 15px;
-                display: none;
-                text-align: center;
+                background: #d4edda; border: 2px solid #28a745; border-radius: 12px;
+                padding: 15px 20px; margin-top: 15px; display: none; text-align: center;
             }}
-            #captured-time {{
-                font-size: 32px;
-                font-weight: bold;
-                color: #155724;
-                font-family: monospace;
-                display: block;
-                margin: 5px 0;
-            }}
-            #captured-label {{
-                color: #155724;
-                font-size: 14px;
-            }}
-            #captured-hint {{
-                color: #666;
-                font-size: 13px;
-                margin-top: 8px;
-            }}
+            #captured-time {{ font-size: 32px; font-weight: bold; color: #155724; font-family: monospace; display: block; margin: 5px 0; }}
+            #captured-label {{ color: #155724; font-size: 14px; }}
+            #captured-hint {{ color: #666; font-size: 13px; margin-top: 8px; }}
         </style>
         <div id="player-container">
             <div id="player"></div>
@@ -570,65 +456,48 @@ def _show_new_material_pause_time_dialog(youtube_url):
             </div>
         </div>
         <script>
-            var player;
-            var timeUpdateInterval;
-
+            var player; var timeUpdateInterval;
             var tag = document.createElement('script');
             tag.src = "https://www.youtube.com/iframe_api";
             var firstScriptTag = document.getElementsByTagName('script')[0];
             firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-
             function onYouTubeIframeAPIReady() {{
                 player = new YT.Player('player', {{
-                    height: '315',
-                    width: '100%',
-                    videoId: '{video_id}',
+                    height: '315', width: '100%', videoId: '{video_id}',
                     playerVars: {{ 'playsinline': 1, 'rel': 0 }},
                     events: {{ 'onReady': onPlayerReady }}
                 }});
             }}
-
             function onPlayerReady(event) {{
                 updateTimeDisplay();
                 timeUpdateInterval = setInterval(updateTimeDisplay, 500);
             }}
-
             function formatTime(seconds) {{
                 var mins = Math.floor(seconds / 60);
                 var secs = seconds % 60;
                 return mins + ":" + (secs < 10 ? "0" : "") + secs;
             }}
-
             function updateTimeDisplay() {{
                 if (player && player.getCurrentTime) {{
                     var seconds = Math.floor(player.getCurrentTime());
                     document.getElementById('time-display').textContent = formatTime(seconds);
                 }}
             }}
-
             function captureTime() {{
                 if (player && player.getCurrentTime) {{
                     var seconds = Math.floor(player.getCurrentTime());
                     var timeStr = formatTime(seconds);
                     player.pauseVideo();
-
-                    // Show captured time prominently
                     document.getElementById('captured-time').textContent = timeStr;
                     document.getElementById('captured-box').style.display = 'block';
-
-                    // Copy to clipboard
                     navigator.clipboard.writeText(timeStr).catch(function() {{}});
                 }}
             }}
         </script>
         '''
         st.components.v1.html(video_html, height=480)
-    else:
-        st.warning(t("no_transcript"))
 
     st.divider()
-
-    # Time entry - paste from video or type manually
     st.markdown(f"**{t('enter_time_manually')}**")
     col_time, col_questions, col_add = st.columns([2, 2, 1])
     with col_time:
@@ -645,15 +514,13 @@ def _show_new_material_pause_time_dialog(youtube_url):
                     pause_times.sort(key=lambda x: x["t"])
                     st.session_state.new_material_editing_pause_times = pause_times
                     st.rerun()
+                else:
+                    st.warning(t("time_already_exists"))
+            else:
+                st.warning(t("invalid_time_format"))
 
-    st.divider()
-
-    # Display marked pause times
-    st.subheader(t("marked_pause_times"))
-    if not pause_times:
-        st.info(t("no_pause_times"))
-    else:
-        for i, pt in enumerate(pause_times):
+    if pause_times:
+        for i, pt in enumerate(list(pause_times)):
             col_display, col_q, col_del = st.columns([2, 2, 1])
             with col_display:
                 st.write(f"⏱️ **{_seconds_to_mmss(pt['t'])}**")
@@ -672,20 +539,22 @@ def _show_new_material_pause_time_dialog(youtube_url):
                     pause_times.pop(i)
                     st.session_state.new_material_editing_pause_times = pause_times
                     st.rerun()
+    else:
+        st.info(t("no_pause_times"))
 
-    st.divider()
-
-    # Save and cancel buttons
     col_save, col_cancel = st.columns(2)
     with col_save:
         if st.button(t("save_pause_times"), type="primary", key="new_mat_save_pause_times_btn"):
-            # Store in session state for the material creation
             st.session_state.new_material_pause_times = pause_times.copy()
-            del st.session_state["new_material_editing_pause_times"]
+            if "new_material_editing_pause_times" in st.session_state:
+                del st.session_state["new_material_editing_pause_times"]
+            st.session_state.pop("_show_new_mat_pause_editor", None)
             st.rerun()
     with col_cancel:
         if st.button(t("cancel"), key="new_mat_cancel_pause_times_btn"):
-            del st.session_state["new_material_editing_pause_times"]
+            if "new_material_editing_pause_times" in st.session_state:
+                del st.session_state["new_material_editing_pause_times"]
+            st.session_state.pop("_show_new_mat_pause_editor", None)
             st.rerun()
 
 
@@ -1140,7 +1009,7 @@ pdfjsLib.getDocument({{data: uint8}}).promise.then(function(pdf) {{
         )
     else:
         st.write(t("no_preview"))
-    if st.button(t("close"), key="close_mat_dialog", use_container_width=True):
+    if st.button(t("close"), key="close_mat_dialog", width="stretch"):
         # Clear all show_mat flags
         for k in list(st.session_state.keys()):
             if k.startswith("show_mat_"):
@@ -1436,7 +1305,7 @@ function escHtml(s) {{
     st.info(t("study_watch"))
     components.html(study_html, height=460)
 
-    if st.button(t("close"), key="close_study_dialog", use_container_width=True):
+    if st.button(t("close"), key="close_study_dialog", width="stretch"):
         for k in list(st.session_state.keys()):
             if k.startswith("study_"):
                 del st.session_state[k]
@@ -1582,17 +1451,17 @@ def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_m
             col_idx = 0
             with btn_cols[col_idx]:
                 if has_access:
-                    if st.button("▶️", key=f"{prefix}select_{test_id}", use_container_width=True, help=t("select")):
+                    if st.button("▶️", key=f"{prefix}select_{test_id}", width="stretch", help=t("select")):
                         st.session_state.selected_test = test_id
                         st.session_state.pop("test_program_visibility", None)  # Clear program context
                         st.session_state.page = "Configurar Test"
                         st.rerun()
                 else:
-                    st.button("▶️", key=f"{prefix}select_{test_id}", use_container_width=True, disabled=True, help=t("select"))
+                    st.button("▶️", key=f"{prefix}select_{test_id}", width="stretch", disabled=True, help=t("select"))
             if can_edit:
                 col_idx += 1
                 with btn_cols[col_idx]:
-                    if st.button("✏️", key=f"{prefix}edit_{test_id}", use_container_width=True, help=t("edit_test")):
+                    if st.button("✏️", key=f"{prefix}edit_{test_id}", width="stretch", help=t("edit_test")):
                         st.session_state.editing_test_id = test_id
                         st.session_state.page = "Editar Test"
                         st.rerun()
@@ -1605,7 +1474,7 @@ def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_m
                         file_name=f"{export_title}.json",
                         mime="application/json",
                         key=f"{prefix}export_{test_id}",
-                        use_container_width=True,
+                        width="stretch",
                         help=t("export_json"),
                     )
 
@@ -1636,7 +1505,7 @@ def _import_test_dialog():
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button(t("import"), type="primary", use_container_width=True):
+                if st.button(t("import"), type="primary", width="stretch"):
                     try:
                         test_id, title = import_test_from_json(st.session_state.user_id, json_data)
                         st.session_state.import_success = t("test_imported", title=title)
@@ -1646,7 +1515,7 @@ def _import_test_dialog():
                     except Exception as e:
                         st.error(t("import_error", error=str(e)))
             with col2:
-                if st.button(t("cancel"), use_container_width=True):
+                if st.button(t("cancel"), width="stretch"):
                     st.rerun()
         except json_module.JSONDecodeError:
             st.error(t("invalid_json"))
@@ -1696,7 +1565,7 @@ def _import_questions_dialog(test_id, materials):
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button(t("import"), type="primary", use_container_width=True):
+                    if st.button(t("import"), type="primary", width="stretch"):
                         next_num = get_next_question_num(test_id)
                         imported_count = 0
                         for i, q in enumerate(questions_list):
@@ -1717,7 +1586,7 @@ def _import_questions_dialog(test_id, materials):
                         st.session_state.import_q_success = t("questions_imported", n=imported_count)
                         st.rerun()
                 with col2:
-                    if st.button(t("cancel"), use_container_width=True):
+                    if st.button(t("cancel"), width="stretch"):
                         st.rerun()
             except json_module.JSONDecodeError:
                 st.error(t("invalid_json"))
@@ -1795,7 +1664,7 @@ def show_home_page():
             st.markdown("&nbsp;")
             st.markdown("---")
             if not logged_in:
-                if st.button(t("home_get_started"), key="visitor_start", use_container_width=True):
+                if st.button(t("home_get_started"), key="visitor_start", width="stretch"):
                     st.session_state.page = "Tests"
                     st.rerun()
 
@@ -1817,7 +1686,7 @@ def show_home_page():
             st.markdown("&nbsp;")
             st.markdown("---")
             if not logged_in:
-                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knower_login", use_container_width=True)
+                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knower_login", width="stretch")
 
     # Knowter plan (premium)
     with col3:
@@ -1841,7 +1710,7 @@ def show_home_page():
             st.markdown(f"📋 {t('home_feature_periodic_survey')}")
             st.markdown("---")
             if not logged_in:
-                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knowter_login", use_container_width=True)
+                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knowter_login", width="stretch")
             elif is_knower:
                 # Check if user already has a pending request
                 #status = get_user_survey_status(st.session_state.get("user_id"))
@@ -1849,14 +1718,14 @@ def show_home_page():
                 #    st.info(t("pending_admin_review"))
                 #else:
                     # Show "Become Knowter" button for knowers who want to upgrade
-                #    if st.button(t("become_knowter"), key="become_knowter_btn", use_container_width=True):
+                #    if st.button(t("become_knowter"), key="become_knowter_btn", width="stretch"):
                 #        st.session_state.page = "Choose Access Type"
                 #        st.rerun()
                 # Knowter plan coming soon - button disabled
                 st.button(
                     f"{t('become_knowter')} ({t('paid_plan_coming_soon')})",
                     key="become_knowter_btn",
-                    use_container_width=True,
+                    width="stretch",
                     disabled=True
                 )
 
@@ -1912,7 +1781,7 @@ def show_choose_access_type():
             st.button(
                 t("paid_plan_coming_soon"),
                 key="paid_plan_btn",
-                use_container_width=True,
+                width="stretch",
                 disabled=True
             )
 
@@ -1925,7 +1794,7 @@ def show_choose_access_type():
             st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
             st.markdown(f"📋 {t('home_feature_periodic_survey')}")
             st.markdown("---")
-            if st.button(t("request_survey_access"), key="survey_access_btn", use_container_width=True):
+            if st.button(t("request_survey_access"), key="survey_access_btn", width="stretch"):
                 user_id = st.session_state.get("user_id")
                 # Create pending approval request
                 status = get_user_survey_status(user_id)
@@ -2041,11 +1910,11 @@ def show_test_catalog():
         col_create, col_import, col_bulk = st.columns([1, 1, 1])
         with col_create:
             if _can_create_tests():
-                if st.button(t("create_test"), type="secondary", use_container_width=True):
+                if st.button(t("create_test"), type="secondary", width="stretch"):
                     st.session_state.page = "Crear Test"
                     st.rerun()
         with col_import:
-            if st.button(t("import_test"), type="secondary", use_container_width=True):
+            if st.button(t("import_test"), type="secondary", width="stretch"):
                 _import_test_dialog()
         with col_bulk:
             if all_tests:
@@ -2085,7 +1954,7 @@ def show_test_catalog():
         with col_info:
             st.info(t("selected_items", n=selected_count))
         with col_del:
-            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True):
+            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, width="stretch"):
                 for test_id in st.session_state.bulk_delete_tests:
                     delete_test(test_id)
                 st.session_state.bulk_delete_tests = set()
@@ -2686,7 +2555,7 @@ def show_quiz():
                 st.rerun()
         else:
             for i, option in enumerate(question["options"]):
-                if st.button(option, key=f"option_{i}", use_container_width=True):
+                if st.button(option, key=f"option_{i}", width="stretch"):
                     st.session_state.selected_answer = i
                     st.session_state.answered = True
                     is_correct = i == question["answer_index"]
@@ -2873,14 +2742,14 @@ def show_dashboard():
 
             with col_actions:
                 # Retake test button
-                if st.button(t("retake_test"), key=f"retake_{test_id}", use_container_width=True):
+                if st.button(t("retake_test"), key=f"retake_{test_id}", width="stretch"):
                     st.session_state.selected_test = test_id
                     st.session_state.page = "Configurar Test"
                     st.rerun()
 
                 # Practice worst topic button (if available)
                 if worst_topic:
-                    if st.button(t("practice_worst_topic"), key=f"practice_worst_{test_id}", use_container_width=True):
+                    if st.button(t("practice_worst_topic"), key=f"practice_worst_{test_id}", width="stretch"):
                         _start_topic_focused_test(test_id, worst_topic[2])
 
     # --- Programs Section ---
@@ -2918,7 +2787,7 @@ def show_dashboard():
 
                 with col_actions:
                     # Go to program button
-                    if st.button(t("view_course"), key=f"view_prog_{program_id}", use_container_width=True):
+                    if st.button(t("view_course"), key=f"view_prog_{program_id}", width="stretch"):
                         st.session_state.selected_program = program_id
                         st.session_state.page = "Configurar Curso"
                         st.rerun()
@@ -3330,12 +3199,19 @@ def show_test_editor():
                             else:
                                 st.warning(t("no_transcript"))
                     with cols[4]:
+                        editor_key = f"_show_pause_editor_{mat['id']}"
                         if st.button("⏱️", key=f"pause_times_mat_{mat['id']}", help=t("pause_time_selector_title")):
-                            _show_pause_time_selector_dialog(mat["id"], mat["url"], mat.get("pause_times", ""))
+                            st.session_state[editor_key] = not st.session_state.get(editor_key, False)
+                            st.rerun()
                 with cols[-1]:
                     if st.button("🗑️", key=f"del_mat_{mat['id']}"):
                         delete_test_material(mat["id"])
                         st.rerun()
+
+                # Show inline pause time editor when toggled
+                if st.session_state.get(f"_show_pause_editor_{mat['id']}", False):
+                    with st.container(border=True):
+                        _show_pause_time_editor_inline(mat["id"], mat["url"], mat.get("pause_times", ""))
 
         st.write(t("add_material_label"))
         mat_type = st.selectbox(t("material_type"), ["pdf", "youtube", "image", "url"],
@@ -3356,8 +3232,13 @@ def show_test_editor():
                     # Show pause times button only if URL is entered
                     if mat_url.strip() and _extract_youtube_id(mat_url.strip()):
                         if st.button(t("set_pause_times"), key="new_mat_pause_btn"):
-                            _show_new_material_pause_time_dialog(mat_url.strip())
-                # Get pause times from session state if set via dialog
+                            st.session_state["_show_new_mat_pause_editor"] = not st.session_state.get("_show_new_mat_pause_editor", False)
+                            st.rerun()
+                # Show inline pause time editor when toggled
+                if st.session_state.get("_show_new_mat_pause_editor", False) and mat_url.strip():
+                    with st.container(border=True):
+                        _show_new_material_pause_time_inline(mat_url.strip())
+                # Get pause times from session state if set via editor
                 if "new_material_pause_times" in st.session_state:
                     stored_pause_times = st.session_state.new_material_pause_times
                     if stored_pause_times:
@@ -3464,13 +3345,13 @@ def show_test_editor():
         if not read_only:
             col_add_q, col_import_q, col_bulk_q = st.columns([1, 1, 1])
             with col_add_q:
-                if st.button(t("add_question"), use_container_width=True):
+                if st.button(t("add_question"), width="stretch"):
                     next_num = get_next_question_num(test_id)
                     default_tag = all_tags[0] if all_tags else "general"
                     add_question(test_id, next_num, default_tag, t("new_question_text"), [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, "")
                     st.rerun()
             with col_import_q:
-                if st.button(t("import_questions"), use_container_width=True):
+                if st.button(t("import_questions"), width="stretch"):
                     _import_questions_dialog(test_id, materials)
             with col_bulk_q:
                 q_bulk_delete = st.toggle(t("bulk_delete_mode"), key="q_bulk_delete_mode")
@@ -3494,7 +3375,7 @@ def show_test_editor():
                     selected_count = len(st.session_state.get("bulk_delete_questions", set()))
                     st.info(t("selected_items", n=selected_count))
                 with col_del_q:
-                    if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True, key="del_selected_questions"):
+                    if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, width="stretch", key="del_selected_questions"):
                         for db_id in st.session_state.bulk_delete_questions:
                             delete_question(db_id)
                         deleted_n = len(st.session_state.bulk_delete_questions)
@@ -4558,16 +4439,16 @@ def _render_program_card(prog, user_id, has_access=True, prefix="", bulk_delete_
             col_idx = 0
             with btn_cols[col_idx]:
                 if has_access:
-                    if st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", use_container_width=True, help=t("select")):
+                    if st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", width="stretch", help=t("select")):
                         st.session_state.selected_program = prog["id"]
                         st.session_state.page = "Configurar Curso"
                         st.rerun()
                 else:
-                    st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", use_container_width=True, disabled=True, help=t("select"))
+                    st.button("▶️", key=f"{prefix}prog_sel_{prog['id']}", width="stretch", disabled=True, help=t("select"))
             if can_edit:
                 col_idx += 1
                 with btn_cols[col_idx]:
-                    if st.button("✏️", key=f"{prefix}prog_edit_{prog['id']}", use_container_width=True, help=t("edit_course")):
+                    if st.button("✏️", key=f"{prefix}prog_edit_{prog['id']}", width="stretch", help=t("edit_course")):
                         st.session_state.editing_program_id = prog["id"]
                         st.session_state.page = "Editar Curso"
                         st.rerun()
@@ -4580,7 +4461,7 @@ def _render_program_card(prog, user_id, has_access=True, prefix="", bulk_delete_
                         file_name=f"{export_title}.json",
                         mime="application/json",
                         key=f"{prefix}prog_export_{prog['id']}",
-                        use_container_width=True,
+                        width="stretch",
                         help=t("export_course"),
                     )
 
@@ -4623,7 +4504,7 @@ def show_programs():
     if _is_global_admin():
         col_create, col_bulk = st.columns([1, 1])
         with col_create:
-            if st.button(t("create_course"), type="secondary", use_container_width=True):
+            if st.button(t("create_course"), type="secondary", width="stretch"):
                 st.session_state.page = "Crear Curso"
                 st.rerun()
         with col_bulk:
@@ -4643,7 +4524,7 @@ def show_programs():
         with col_info:
             st.info(t("selected_items", n=selected_count))
         with col_del:
-            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, use_container_width=True):
+            if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, width="stretch"):
                 for prog_id in st.session_state.bulk_delete_programs:
                     delete_program(prog_id)
                 st.session_state.bulk_delete_programs = set()
@@ -5100,7 +4981,7 @@ def show_program_config():
                     # Disable button for private tests without access
                     btn_disabled = not can_access_test
                     btn_help = t("select") if can_access_test else t("test_private_no_access")
-                    if st.button("▶️", key=f"prog_view_test_{test_id}", use_container_width=True, help=btn_help, disabled=btn_disabled):
+                    if st.button("▶️", key=f"prog_view_test_{test_id}", width="stretch", help=btn_help, disabled=btn_disabled):
                         st.session_state.selected_test = test_id
                         st.session_state.test_program_visibility = program_visibility  # For material visibility
                         st.session_state.page = "Configurar Test"
@@ -5109,7 +4990,7 @@ def show_program_config():
                 if can_edit_test:
                     btn_idx += 1
                     with btn_cols[btn_idx]:
-                        if st.button("✏️", key=f"prog_edit_test_{test_id}", use_container_width=True, help=t("edit_test")):
+                        if st.button("✏️", key=f"prog_edit_test_{test_id}", width="stretch", help=t("edit_test")):
                             st.session_state.editing_test_id = test_id
                             st.rerun()
                     btn_idx += 1
@@ -5121,7 +5002,7 @@ def show_program_config():
                             file_name=f"{export_title}.json",
                             mime="application/json",
                             key=f"prog_export_test_{test_id}",
-                            use_container_width=True,
+                            width="stretch",
                             help=t("export_json"),
                         )
 
@@ -5152,7 +5033,7 @@ def show_program_config():
     btn_cols = st.columns(4 if can_edit_program else 2)
     col_idx = 0
     with btn_cols[col_idx]:
-        if st.button(t("back_to_courses"), use_container_width=True):
+        if st.button(t("back_to_courses"), width="stretch"):
             if "selected_program" in st.session_state:
                 del st.session_state.selected_program
             st.session_state.page = "Cursos"
@@ -5160,7 +5041,7 @@ def show_program_config():
     col_idx += 1
     if can_edit_program:
         with btn_cols[col_idx]:
-            if st.button(f"✏️ {t('edit_program')}", use_container_width=True):
+            if st.button(f"✏️ {t('edit_program')}", width="stretch"):
                 st.session_state.editing_program_id = program_id
                 st.session_state.page = "Editar Curso"
                 st.rerun()
@@ -5173,7 +5054,7 @@ def show_program_config():
                 file_name=f"{export_title}.json",
                 mime="application/json",
                 key="export_program_json",
-                use_container_width=True,
+                width="stretch",
             )
 
     if not questions:
@@ -5262,11 +5143,11 @@ def main():
                     st.image(avatar_bytes, width=60)
                 st.write(f"**{display_name}**")
                 st.divider()
-                if st.button(t("profile"), key="menu_profile", use_container_width=True):
+                if st.button(t("profile"), key="menu_profile", width="stretch"):
                     st.session_state.prev_page = st.session_state.page
                     st.session_state.page = "Perfil"
                     st.rerun()
-                if st.button(t("logout"), key="menu_logout", use_container_width=True):
+                if st.button(t("logout"), key="menu_logout", width="stretch"):
                     for key in list(st.session_state.keys()):
                         del st.session_state[key]
                     st.logout()
@@ -5318,7 +5199,7 @@ def main():
         for icon, page_id, display in nav_items:
             is_active = st.session_state.page == page_id
             btn_type = "primary" if is_active else "secondary"
-            if st.button(f"{icon}  {display}", key=f"nav_{page_id}", use_container_width=True, type=btn_type):
+            if st.button(f"{icon}  {display}", key=f"nav_{page_id}", width="stretch", type=btn_type):
                 st.session_state.page = page_id
                 st.rerun()
         st.markdown("---")

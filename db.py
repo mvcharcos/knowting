@@ -220,7 +220,7 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN avatar BLOB")
         conn.commit()
     if "global_role" not in columns:
-        conn.execute("ALTER TABLE users ADD COLUMN global_role TEXT DEFAULT 'knower'")
+        conn.execute("ALTER TABLE users ADD COLUMN global_role TEXT DEFAULT 'tester'")
         conn.commit()
 
     # Migrate any existing 'student' global roles to 'knower' (student role removed from global roles)
@@ -1102,7 +1102,7 @@ def create_user(username, password):
     conn = get_connection()
     try:
         conn.execute(
-            "INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)",
+            "INSERT INTO users (username, password_hash, salt, global_role) VALUES (?, ?, ?, 'tester')",
             (username, hashed, salt),
         )
         conn.commit()
@@ -1152,7 +1152,7 @@ def get_or_create_google_user(email, name):
         return row[0]
     try:
         cursor = conn.execute(
-            "INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)",
+            "INSERT INTO users (username, password_hash, salt, global_role) VALUES (?, ?, ?, 'tester')",
             (email, "oauth_google", "oauth"),
         )
         user_id = cursor.lastrowid
@@ -1608,8 +1608,8 @@ def get_user_global_role(user_id):
 
 
 def set_user_global_role(user_id, role):
-    """Set the global role for a user. Role must be 'knower', 'knowter', or 'admin'."""
-    if role not in ("knower", "knowter", "admin"):
+    """Set the global role for a user. Role must be 'knower', 'knowter', 'tester', or 'admin'."""
+    if role not in ("knower", "knowter", "tester", "admin"):
         raise ValueError(f"Invalid role: {role}")
     conn = get_connection()
     conn.execute(
@@ -1621,8 +1621,8 @@ def set_user_global_role(user_id, role):
 
 
 def set_user_global_role_by_email(email, role):
-    """Set the global role for a user by email. Role must be 'knower', 'knowter', or 'admin'."""
-    if role not in ("knower", "knowter", "admin"):
+    """Set the global role for a user by email. Role must be 'knower', 'knowter', 'tester', or 'admin'."""
+    if role not in ("knower", "knowter", "tester", "admin"):
         raise ValueError(f"Invalid role: {role}")
     conn = get_connection()
     conn.execute(
@@ -2591,3 +2591,35 @@ def get_pending_approval_count():
     ).fetchone()
     conn.close()
     return row[0] if row else 0
+
+
+# --- Global Statistics ---
+
+def get_global_statistics():
+    """Get global platform statistics for home page display."""
+    conn = get_connection()
+
+    # Number of registered users
+    users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    # Number of tests
+    tests_count = conn.execute("SELECT COUNT(*) FROM tests").fetchone()[0]
+
+    # Number of courses/programs
+    courses_count = conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0]
+
+    # Number of test sessions (tests taken)
+    sessions_count = conn.execute("SELECT COUNT(*) FROM test_sessions").fetchone()[0]
+
+    # Number of materials
+    materials_count = conn.execute("SELECT COUNT(*) FROM test_materials").fetchone()[0]
+
+    conn.close()
+
+    return {
+        "users": users_count,
+        "tests": tests_count,
+        "courses": courses_count,
+        "sessions": sessions_count,
+        "materials": materials_count,
+    }
