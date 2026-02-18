@@ -3512,39 +3512,95 @@ def show_test_editor():
             if st.session_state.get("_show_import_questions", False):
                 with st.container(border=True):
                     _show_import_questions_inline(test_id, materials)
-
-            if q_bulk_delete and questions:
-                # Select/unselect all + count + delete button
-                all_q_ids = {q["db_id"] for q in questions}
-                selected_count = len(st.session_state.get("bulk_delete_questions", set()))
-                col_sel_all, col_info_q, col_del_q = st.columns([1, 2, 1])
-                with col_sel_all:
-                    all_selected = st.session_state.get("bulk_delete_questions", set()) >= all_q_ids
-                    if st.checkbox(t("select_all"), value=all_selected, key="q_select_all"):
-                        st.session_state.bulk_delete_questions = set(all_q_ids)
-                    else:
-                        if all_selected:
-                            st.session_state.bulk_delete_questions = set()
-                with col_info_q:
-                    selected_count = len(st.session_state.get("bulk_delete_questions", set()))
-                    st.info(t("selected_items", n=selected_count))
-                with col_del_q:
-                    if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, width="stretch", key="del_selected_questions"):
-                        for db_id in st.session_state.bulk_delete_questions:
-                            delete_question(db_id)
-                        deleted_n = len(st.session_state.bulk_delete_questions)
-                        st.session_state.bulk_delete_questions = set()
-                        st.success(t("questions_deleted", n=deleted_n))
-                        st.rerun()
         else:
             q_bulk_delete = False
 
-        # Pre-load all question-material links
+        # Pre-load all question-material links (needed for material filter)
         all_q_db_ids = [q["db_id"] for q in questions]
         all_q_mat_links = get_question_material_links_bulk(all_q_db_ids) if all_q_db_ids else {}
         mat_by_id = {m["id"]: m for m in materials}
 
-        for q in questions:
+        # --- Search & Filter ---
+        if questions:
+            q_search = st.text_input(t("search_keywords"), key="q_filter_search", placeholder=t("search_placeholder"))
+            col_topic, col_mat, col_from, col_to = st.columns([2, 2, 1, 1])
+            with col_topic:
+                topic_options = [""] + list(all_tags)
+                q_filter_topic = st.selectbox(
+                    t("filter_by_topic"), options=topic_options,
+                    format_func=lambda x: t("all_topics") if x == "" else x,
+                    key="q_filter_topic",
+                )
+            with col_mat:
+                mat_options = [0] + [m["id"] for m in materials]
+                type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
+                mat_labels = {0: t("all_materials")}
+                for m in materials:
+                    icon = type_icons.get(m["material_type"], "📎")
+                    mat_labels[m["id"]] = f"{icon} {m['title'] or m['url'] or t('no_title')}"
+                q_filter_mat = st.selectbox(
+                    t("filter_by_material"), options=mat_options,
+                    format_func=lambda x: mat_labels.get(x, ""),
+                    key="q_filter_material",
+                )
+            q_nums = [q["id"] for q in questions]
+            min_num, max_num = min(q_nums), max(q_nums)
+            with col_from:
+                q_from = st.number_input(t("from_number"), min_value=min_num, max_value=max_num, value=min_num, key="q_filter_from")
+            with col_to:
+                q_to = st.number_input(t("to_number"), min_value=min_num, max_value=max_num, value=max_num, key="q_filter_to")
+
+            # Apply filters
+            filtered_questions = questions
+            if q_search.strip():
+                kw = q_search.strip().lower()
+                filtered_questions = [
+                    q for q in filtered_questions
+                    if kw in q["question"].lower()
+                    or kw in q.get("explanation", "").lower()
+                    or any(kw in opt.lower() for opt in q.get("options", []))
+                ]
+            if q_filter_topic:
+                filtered_questions = [q for q in filtered_questions if q["tag"] == q_filter_topic]
+            if q_filter_mat:
+                linked_db_ids = {db_id for db_id, links in all_q_mat_links.items() if any(lk["material_id"] == q_filter_mat for lk in links)}
+                filtered_questions = [q for q in filtered_questions if q["db_id"] in linked_db_ids]
+            if q_from > min_num or q_to < max_num:
+                filtered_questions = [q for q in filtered_questions if q_from <= q["id"] <= q_to]
+
+            if len(filtered_questions) != len(questions):
+                st.caption(t("questions_shown", shown=len(filtered_questions), total=len(questions)))
+        else:
+            filtered_questions = questions
+
+        # Bulk delete controls (operate on filtered set)
+        if q_bulk_delete and filtered_questions:
+            filtered_q_ids = {q["db_id"] for q in filtered_questions}
+            selected_count = len(st.session_state.get("bulk_delete_questions", set()))
+            col_sel_all, col_info_q, col_del_q = st.columns([1, 2, 1])
+            with col_sel_all:
+                all_selected = st.session_state.get("bulk_delete_questions", set()) >= filtered_q_ids
+                if st.checkbox(t("select_all"), value=all_selected, key="q_select_all"):
+                    st.session_state.bulk_delete_questions = st.session_state.get("bulk_delete_questions", set()) | filtered_q_ids
+                else:
+                    if all_selected:
+                        st.session_state.bulk_delete_questions = st.session_state.get("bulk_delete_questions", set()) - filtered_q_ids
+            with col_info_q:
+                selected_count = len(st.session_state.get("bulk_delete_questions", set()))
+                st.info(t("selected_items", n=selected_count))
+            with col_del_q:
+                if st.button(t("delete_selected"), type="primary", disabled=selected_count == 0, width="stretch", key="del_selected_questions"):
+                    for db_id in st.session_state.bulk_delete_questions:
+                        delete_question(db_id)
+                    deleted_n = len(st.session_state.bulk_delete_questions)
+                    st.session_state.bulk_delete_questions = set()
+                    st.success(t("questions_deleted", n=deleted_n))
+                    st.rerun()
+
+        if not filtered_questions and questions:
+            st.info(t("no_matching_questions"))
+
+        for q in filtered_questions:
             if q_bulk_delete:
                 cb_col, exp_col = st.columns([0.05, 0.95])
                 with cb_col:
@@ -5215,7 +5271,7 @@ def show_program_config():
 
 
 def main():
-    st.set_page_config(page_title="Knowting", page_icon="📚")
+    st.set_page_config(page_title="Knowting Club", page_icon="📚")
 
     _try_login()
 
@@ -5242,7 +5298,7 @@ def main():
     if _show_full_ui:
         col_title, col_avatar = st.columns([6, 1])
         with col_title:
-            st.title("Knowting")
+            st.title("Knowting Club")
             st.subheader(f"*{t('tagline')}*")
     else:
         col_avatar = st.columns([1])[0]
