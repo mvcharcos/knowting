@@ -1537,8 +1537,8 @@ def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_m
                 meta += f"  ·  {_lang_display(test['language'])}"
             st.caption(meta)
         with col_btn:
-            # Show buttons in a row: Select, Edit (if can_edit), Export (if can_edit)
-            btn_cols = st.columns(3 if can_edit else 1)
+            # Show buttons in a row: Select, Edit (if can_edit), Export (if can_edit), Delete (if can_edit)
+            btn_cols = st.columns(4 if can_edit else 1)
             col_idx = 0
             with btn_cols[col_idx]:
                 if has_access:
@@ -1568,6 +1568,33 @@ def _render_test_card(test, favorites, prefix="", has_access=True, bulk_delete_m
                         width="stretch",
                         help=t("export_json"),
                     )
+                col_idx += 1
+                with btn_cols[col_idx]:
+                    delete_key = f"{prefix}confirm_del_test_{test_id}"
+                    if st.button("🗑️", key=f"{prefix}del_{test_id}", width="stretch", help=t("delete")):
+                        st.session_state[delete_key] = True
+        # Inline delete confirmation (outside button columns, inside the card container)
+        if can_edit:
+            delete_key = f"{prefix}confirm_del_test_{test_id}"
+            if st.session_state.get(delete_key):
+                with st.container(border=True):
+                    st.warning(t("confirm_delete"))
+                    st.write(t("type_name_to_confirm", name=test["title"]))
+                    typed = st.text_input("", key=f"{prefix}del_confirm_input_{test_id}", label_visibility="collapsed")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button(t("yes_delete"), key=f"{prefix}del_confirm_btn_{test_id}", type="primary"):
+                            if typed.strip() == test["title"].strip():
+                                delete_test(test_id)
+                                st.session_state.pop(delete_key, None)
+                                st.success(t("test_deleted"))
+                                st.rerun()
+                            else:
+                                st.error(t("type_name_to_confirm", name=test["title"]))
+                    with c2:
+                        if st.button(t("cancel"), key=f"{prefix}del_cancel_btn_{test_id}"):
+                            st.session_state.pop(delete_key, None)
+                            st.rerun()
 
 
 def _show_import_test_inline():
@@ -3602,6 +3629,46 @@ def show_test_editor():
         else:
             filtered_questions = questions
 
+        # --- Pagination ---
+        QUESTIONS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
+        if filtered_questions:
+            col_psize, col_pnav, col_plabel = st.columns([1, 2, 1])
+            with col_psize:
+                per_page = st.selectbox(
+                    t("per_page"), options=QUESTIONS_PER_PAGE_OPTIONS,
+                    index=1, key="q_per_page", label_visibility="collapsed",
+                    format_func=lambda x: f"{x} {t('per_page')}",
+                )
+            total_pages = max(1, (len(filtered_questions) + per_page - 1) // per_page)
+            # Reset page if filters changed and current page exceeds total
+            if st.session_state.get("q_page", 1) > total_pages:
+                st.session_state["q_page"] = 1
+            current_page = st.session_state.get("q_page", 1)
+            with col_pnav:
+                nav_cols = st.columns([1, 1, 1, 1])
+                with nav_cols[0]:
+                    if st.button("⏮", key="q_page_first", disabled=current_page <= 1):
+                        st.session_state["q_page"] = 1
+                        st.rerun()
+                with nav_cols[1]:
+                    if st.button("◀", key="q_page_prev", disabled=current_page <= 1):
+                        st.session_state["q_page"] = current_page - 1
+                        st.rerun()
+                with nav_cols[2]:
+                    if st.button("▶", key="q_page_next", disabled=current_page >= total_pages):
+                        st.session_state["q_page"] = current_page + 1
+                        st.rerun()
+                with nav_cols[3]:
+                    if st.button("⏭", key="q_page_last", disabled=current_page >= total_pages):
+                        st.session_state["q_page"] = total_pages
+                        st.rerun()
+            with col_plabel:
+                st.markdown(f"<div style='text-align:right;padding-top:0.5rem'>{t('page_of', page=current_page, total=total_pages)}</div>", unsafe_allow_html=True)
+            start_idx = (current_page - 1) * per_page
+            page_questions = filtered_questions[start_idx:start_idx + per_page]
+        else:
+            page_questions = filtered_questions
+
         # Bulk delete controls (operate on filtered set)
         if q_bulk_delete and filtered_questions:
             filtered_q_ids = {q["db_id"] for q in filtered_questions}
@@ -3629,7 +3696,7 @@ def show_test_editor():
         if not filtered_questions and questions:
             st.info(t("no_matching_questions"))
 
-        for q in filtered_questions:
+        for q in page_questions:
             if q_bulk_delete:
                 cb_col, exp_col = st.columns([0.05, 0.95])
                 with cb_col:
