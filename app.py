@@ -1024,7 +1024,7 @@ pdfjsLib.getDocument({{data: uint8}}).promise.then(function(pdf) {{
 
 
 @st.dialog("🧠", width="large")
-def _show_study_dialog(mat, label, questions):
+def _show_study_dialog(mat, label, questions, is_reviewer=False):
     """Play a YouTube video, auto-pause after 60s, show question, resume on answer."""
     import re
     import json as _json
@@ -1079,8 +1079,10 @@ def _show_study_dialog(mat, label, questions):
             "question": q["question"], "options": q["options"],
             "answer_index": q["answer_index"], "explanation": q.get("explanation", ""),
             "tag": q.get("tag", ""), "refs": refs, "ts": q_timestamp,
+            "num": q["id"],
         })
     q_json = _json.dumps(q_data, ensure_ascii=False)
+    is_reviewer_js = "true" if is_reviewer else "false"
 
     lang = st.session_state.get("lang", "es")
     correct_label = t("correct")
@@ -1160,6 +1162,9 @@ var INCORRECT_LABEL = {_json.dumps(incorrect_label)};
 var CONTINUE_LABEL = {_json.dumps(continue_label)};
 var CONFIGURED_STOPS = {stops_json};
 var FALLBACK_INTERVAL = 60;
+var IS_REVIEWER = {is_reviewer_js};
+var QUESTION_NUM_LABEL = {_json.dumps(t("question_number", n="__N__"))};
+var MISSING_Q_LABEL = {_json.dumps(t("missing_questions", n="__N__"))};
 
 var tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
@@ -1215,8 +1220,21 @@ function startTimer() {{
         if (shownGlobalIds.indexOf(segGlobal[i]) === -1) unseenCount++;
       }}
       questionsRemaining = Math.min(requested, Math.max(unseenCount, 0));
+      var missingCount = requested - questionsRemaining;
       if (questionsRemaining > 0) {{
-        showQuestion();
+        showQuestion(missingCount);
+      }} else if (IS_REVIEWER && missingCount > 0) {{
+        // Show missing questions warning to reviewer then resume
+        var contentArea = document.getElementById('quiz-content');
+        var btnArea = document.getElementById('btn-area');
+        contentArea.innerHTML = '<div style="color:#e67e22;font-weight:bold;padding:1rem 0;">' + MISSING_Q_LABEL.replace('__N__', missingCount) + '</div>';
+        btnArea.innerHTML = '';
+        overlay.classList.add('active');
+        var continueBtn = document.createElement('button');
+        continueBtn.className = 'continue-btn';
+        continueBtn.textContent = CONTINUE_LABEL;
+        continueBtn.addEventListener('click', function() {{ resumeVideo(); }});
+        btnArea.appendChild(continueBtn);
       }} else {{
         // No unseen questions left — skip quiz and resume
         advanceStop();
@@ -1281,7 +1299,9 @@ function getQuestionsForSegment() {{
   return filtered;
 }}
 
-function showQuestion() {{
+var currentMissingCount = 0;
+function showQuestion(missingCount) {{
+  if (typeof missingCount !== 'undefined') currentMissingCount = missingCount;
   var contentArea = document.getElementById('quiz-content');
   var btnArea = document.getElementById('btn-area');
   var available = getQuestionsForSegment();
@@ -1314,7 +1334,11 @@ function showQuestion() {{
   }}
   var shuffledCorrect = indices.indexOf(q.answer_index);
 
-  var html = '<h3>' + escHtml(q.question) + '</h3>';
+  var html = '';
+  if (IS_REVIEWER && q.num) {{
+    html += '<div class="tag" style="font-weight:bold;margin-bottom:4px">' + QUESTION_NUM_LABEL.replace('__N__', q.num) + '</div>';
+  }}
+  html += '<h3>' + escHtml(q.question) + '</h3>';
   html += '<div class="tag">' + escHtml(q.tag.replace(/_/g, ' ')) + '</div>';
   for (var i = 0; i < indices.length; i++) {{
     html += '<button class="opt-btn" data-idx="' + i + '" data-correct="' + shuffledCorrect + '">'
@@ -1372,6 +1396,13 @@ function showQuestion() {{
           showQuestion();
         }});
       }} else {{
+        // Show missing questions warning before resume button (reviewer only)
+        if (IS_REVIEWER && currentMissingCount > 0) {{
+          var missingDiv = document.createElement('div');
+          missingDiv.style.cssText = 'color:#e67e22;font-weight:bold;padding:0.5rem 0;';
+          missingDiv.textContent = MISSING_Q_LABEL.replace('__N__', currentMissingCount);
+          btnArea.appendChild(missingDiv);
+        }}
         continueBtn.textContent = CONTINUE_LABEL;
         continueBtn.addEventListener('click', function() {{
           resumeVideo();
@@ -2277,10 +2308,14 @@ def show_test_config():
             # Render study dialog if active
             study_mat_id = st.session_state.get("study_mat_id")
             if study_mat_id:
+                logged_uid = st.session_state.get("user_id")
+                _study_role = get_user_role_for_test(test_id, logged_uid) if logged_uid else None
+                _study_is_owner = logged_uid and test["owner_id"] == logged_uid
+                _study_is_reviewer = _is_global_admin() or _study_is_owner or _study_role in ("reviewer", "admin")
                 for mat in materials:
                     if mat["id"] == study_mat_id:
                         label = mat["title"] or mat["url"] or t("no_title")
-                        _show_study_dialog(mat, label, questions)
+                        _show_study_dialog(mat, label, questions, is_reviewer=_study_is_reviewer)
                         break
 
     is_owner = _is_logged_in() and test["owner_id"] == st.session_state.user_id
@@ -3538,6 +3573,64 @@ def show_test_editor():
 
         st.divider()
 
+    # --- Warnings: segments lacking questions ---
+    import json as _json_warn
+    _seg_warnings = []
+    q_db_ids_warn = [q["db_id"] for q in questions]
+    all_q_mat_links_warn = get_question_material_links_bulk(q_db_ids_warn) if q_db_ids_warn else {}
+    # Build reverse map: material_id -> list of question timestamps (in seconds)
+    _mat_q_times = {}
+    for db_id, links in all_q_mat_links_warn.items():
+        for lk in links:
+            mid = lk["material_id"]
+            ctx = lk.get("context", "").strip()
+            if ctx:
+                _mat_q_times.setdefault(mid, []).append(_time_to_secs(ctx))
+
+    for mat in materials:
+        if mat.get("material_type") != "youtube":
+            continue
+        pause_json = mat.get("pause_times", "")
+        if not pause_json:
+            continue
+        try:
+            stops = _json_warn.loads(pause_json)
+        except (ValueError, TypeError):
+            continue
+        if not stops:
+            continue
+        # Handle old format
+        if isinstance(stops[0], (int, float)):
+            stops = [{"t": s, "n": 1} for s in stops]
+        stops.sort(key=lambda x: x["t"])
+
+        mat_label = mat.get("title") or mat.get("url") or "?"
+        q_times = _mat_q_times.get(mat["id"], [])
+        prev_t = 0
+        for stop in stops:
+            stop_t = stop["t"]
+            needed = stop.get("n", 1)
+            # Count questions in this segment [prev_t, stop_t)
+            available_count = sum(1 for qt in q_times if prev_t <= qt < stop_t)
+            if available_count < needed:
+                _seg_warnings.append({
+                    "material": mat_label,
+                    "start": _seconds_to_mmss(prev_t),
+                    "end": _seconds_to_mmss(stop_t),
+                    "needed": needed,
+                    "available": available_count,
+                })
+            prev_t = stop_t
+        # Last segment: from last pause to end — check if there are questions after the last stop
+        # (no pause after, so no warning needed for the tail)
+
+    if _seg_warnings:
+        with st.expander(f"⚠️ {t('warnings')} ({len(_seg_warnings)})", expanded=True):
+            for w in _seg_warnings:
+                st.warning(t("segment_missing_questions",
+                             material=w["material"], start=w["start"], end=w["end"],
+                             needed=w["needed"], available=w["available"]))
+
     # --- Questions ---
     all_tags = get_test_tags(test_id)
 
@@ -3591,9 +3684,11 @@ def show_test_editor():
                 mat_options = [0] + [m["id"] for m in materials]
                 type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
                 mat_labels = {0: t("all_materials")}
+                mat_by_id_local = {}
                 for m in materials:
                     icon = type_icons.get(m["material_type"], "📎")
                     mat_labels[m["id"]] = f"{icon} {m['title'] or m['url'] or t('no_title')}"
+                    mat_by_id_local[m["id"]] = m
                 q_filter_mat = st.selectbox(
                     t("filter_by_material"), options=mat_options,
                     format_func=lambda x: mat_labels.get(x, ""),
@@ -3605,6 +3700,58 @@ def show_test_editor():
                 q_from = st.number_input(t("from_number"), min_value=min_num, max_value=max_num, value=min_num, key="q_filter_from")
             with col_to:
                 q_to = st.number_input(t("to_number"), min_value=min_num, max_value=max_num, value=max_num, key="q_filter_to")
+
+            # Time range filter (shown when a YouTube material is selected)
+            q_filter_time_from = 0
+            q_filter_time_to = 0
+            if q_filter_mat:
+                selected_mat = mat_by_id_local.get(q_filter_mat)
+                if selected_mat and selected_mat.get("material_type") == "youtube":
+                    import json as _json_time
+                    # Build segment options from pause_times
+                    pause_json = selected_mat.get("pause_times", "")
+                    segments = []  # list of (from_secs, to_secs, label)
+                    if pause_json:
+                        try:
+                            stops = _json_time.loads(pause_json)
+                            stop_times = sorted(s["t"] for s in stops)
+                            prev = 0
+                            for st_time in stop_times:
+                                segments.append((prev, st_time, f"{_seconds_to_mmss(prev)} → {_seconds_to_mmss(st_time)}"))
+                                prev = st_time
+                            # Last segment: from last pause to end (use 0 as unbounded)
+                            segments.append((prev, 0, f"{_seconds_to_mmss(prev)} → ..."))
+                        except (ValueError, TypeError, KeyError):
+                            pass
+
+                    # Segment selector + custom option
+                    seg_options = ["all"] + [f"seg_{i}" for i in range(len(segments))] + ["custom"]
+                    def _seg_label(key):
+                        if key == "all":
+                            return t("all_segments")
+                        if key == "custom":
+                            return t("custom_time_range")
+                        idx = int(key.split("_")[1])
+                        return segments[idx][2]
+
+                    col_seg, col_t_from, col_t_to = st.columns([2, 1, 1])
+                    with col_seg:
+                        q_seg_choice = st.selectbox(
+                            t("video_segment"), options=seg_options,
+                            format_func=_seg_label,
+                            key="q_filter_segment",
+                        )
+                    if q_seg_choice == "custom":
+                        with col_t_from:
+                            q_time_from_str = st.text_input(t("from_time"), value="", placeholder="0:00", key="q_filter_time_from")
+                        with col_t_to:
+                            q_time_to_str = st.text_input(t("to_time"), value="", placeholder="0:00", key="q_filter_time_to")
+                        q_filter_time_from = _time_to_secs(q_time_from_str) if q_time_from_str.strip() else 0
+                        q_filter_time_to = _time_to_secs(q_time_to_str) if q_time_to_str.strip() else 0
+                    elif q_seg_choice != "all":
+                        seg_idx = int(q_seg_choice.split("_")[1])
+                        q_filter_time_from = segments[seg_idx][0]
+                        q_filter_time_to = segments[seg_idx][1]
 
             # Apply filters
             filtered_questions = questions
@@ -3619,8 +3766,26 @@ def show_test_editor():
             if q_filter_topic:
                 filtered_questions = [q for q in filtered_questions if q["tag"] == q_filter_topic]
             if q_filter_mat:
-                linked_db_ids = {db_id for db_id, links in all_q_mat_links.items() if any(lk["material_id"] == q_filter_mat for lk in links)}
-                filtered_questions = [q for q in filtered_questions if q["db_id"] in linked_db_ids]
+                if q_filter_time_from or q_filter_time_to:
+                    # Filter by material AND time range using the context timestamps
+                    linked_db_ids = set()
+                    for db_id, links in all_q_mat_links.items():
+                        for lk in links:
+                            if lk["material_id"] != q_filter_mat:
+                                continue
+                            ctx = lk.get("context", "").strip()
+                            if not ctx:
+                                continue
+                            q_secs = _time_to_secs(ctx)
+                            if q_filter_time_from and q_secs < q_filter_time_from:
+                                continue
+                            if q_filter_time_to and q_secs > q_filter_time_to:
+                                continue
+                            linked_db_ids.add(db_id)
+                    filtered_questions = [q for q in filtered_questions if q["db_id"] in linked_db_ids]
+                else:
+                    linked_db_ids = {db_id for db_id, links in all_q_mat_links.items() if any(lk["material_id"] == q_filter_mat for lk in links)}
+                    filtered_questions = [q for q in filtered_questions if q["db_id"] in linked_db_ids]
             if q_from > min_num or q_to < max_num:
                 filtered_questions = [q for q in filtered_questions if q_from <= q["id"] <= q_to]
 
