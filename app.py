@@ -1439,12 +1439,15 @@ def _get_test_export_data(test_id):
     for c in get_collaborators(test_id):
         export_collabs.append({"email": c["email"], "role": c["role"]})
 
+    export_tags = get_test_tags(test_id)
+
     export_data = {
         "title": test["title"],
         "description": test.get("description", ""),
         "author": test.get("author", ""),
         "language": test.get("language", ""),
         "visibility": test.get("visibility", "public"),
+        "tags": export_tags,
         "materials": export_materials,
         "collaborators": export_collabs,
         "questions": export_questions,
@@ -2285,12 +2288,14 @@ def show_test_config():
             export_collabs = []
             for c in get_collaborators(test_id):
                 export_collabs.append({"email": c["email"], "role": c["role"]})
+            export_tags = get_test_tags(test_id)
             export_data = {
                 "title": test["title"],
                 "description": test.get("description", ""),
                 "author": test.get("author", ""),
                 "language": test.get("language", ""),
                 "visibility": test.get("visibility", "public"),
+                "tags": export_tags,
                 "materials": export_materials,
                 "collaborators": export_collabs,
                 "questions": export_questions,
