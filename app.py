@@ -1206,8 +1206,22 @@ function startTimer() {{
       questionShown = true;
       stopTimer();
       player.pauseVideo();
-      questionsRemaining = (useConfigured && stopIdx < CONFIGURED_STOPS.length) ? CONFIGURED_STOPS[stopIdx].n : 1;
-      showQuestion();
+      var requested = (useConfigured && stopIdx < CONFIGURED_STOPS.length) ? CONFIGURED_STOPS[stopIdx].n : 1;
+      // Cap to unseen questions available for this segment (no duplicates)
+      var segAvailable = getQuestionsForSegment();
+      var segGlobal = segAvailable.map(function(q) {{ return QUESTIONS.indexOf(q); }});
+      var unseenCount = 0;
+      for (var i = 0; i < segGlobal.length; i++) {{
+        if (shownGlobalIds.indexOf(segGlobal[i]) === -1) unseenCount++;
+      }}
+      questionsRemaining = Math.min(requested, Math.max(unseenCount, 0));
+      if (questionsRemaining > 0) {{
+        showQuestion();
+      }} else {{
+        // No unseen questions left — skip quiz and resume
+        advanceStop();
+        player.playVideo();
+      }}
     }}
   }}, 500);
 }}
@@ -1280,21 +1294,31 @@ function showQuestion() {{
       unseenIndices.push(i);
     }}
   }}
-  // If all segment questions were shown, reset globally and retry
+  // If all segment questions were shown, skip (no duplicates)
   if (unseenIndices.length === 0) {{
-    shownGlobalIds = [];
-    for (var i = 0; i < available.length; i++) {{ unseenIndices.push(i); }}
+    questionsRemaining = 0;
+    resumeVideo();
+    return;
   }}
   // Pick a random unseen question
   var pick = unseenIndices[Math.floor(Math.random() * unseenIndices.length)];
   var q = available[pick];
   shownGlobalIds.push(availableGlobal[pick]);
 
+  // Shuffle options while tracking the correct answer
+  var indices = [];
+  for (var i = 0; i < q.options.length; i++) indices.push(i);
+  for (var i = indices.length - 1; i > 0; i--) {{
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = indices[i]; indices[i] = indices[j]; indices[j] = tmp;
+  }}
+  var shuffledCorrect = indices.indexOf(q.answer_index);
+
   var html = '<h3>' + escHtml(q.question) + '</h3>';
   html += '<div class="tag">' + escHtml(q.tag.replace(/_/g, ' ')) + '</div>';
-  for (var i = 0; i < q.options.length; i++) {{
-    html += '<button class="opt-btn" data-idx="' + i + '" data-correct="' + q.answer_index + '">'
-          + escHtml(q.options[i]) + '</button>';
+  for (var i = 0; i < indices.length; i++) {{
+    html += '<button class="opt-btn" data-idx="' + i + '" data-correct="' + shuffledCorrect + '">'
+          + escHtml(q.options[indices[i]]) + '</button>';
   }}
   html += '<div id="result-area"></div>';
   if (q.explanation) {{
