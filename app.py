@@ -732,6 +732,91 @@ def _generate_questions_from_transcript(transcript_text, num_questions=5):
     return all_questions
 
 
+def _extract_segment_transcript(full_transcript, start_secs, end_secs):
+    """Extract the portion of a timestamped transcript between start_secs and end_secs."""
+    import re as _re
+    if not full_transcript:
+        return ""
+    parsed_lines = []
+    for line in full_transcript.split("\n"):
+        m_ts = _re.match(r'\[(\d+(?::\d{1,2}){1,2})\]', line)
+        if m_ts:
+            parsed_lines.append((_time_to_secs(m_ts.group(1)), line))
+        elif parsed_lines:
+            parsed_lines.append((parsed_lines[-1][0], line))
+    if not parsed_lines:
+        return ""
+    start_idx = 0
+    for i, (ts, _) in enumerate(parsed_lines):
+        if ts >= start_secs:
+            start_idx = max(0, i - 1) if i > 0 and ts > start_secs else i
+            break
+    end_idx = len(parsed_lines)
+    for i in range(len(parsed_lines) - 1, -1, -1):
+        if parsed_lines[i][0] < end_secs:
+            end_idx = i + 1
+            break
+    return "\n".join(line for _, line in parsed_lines[start_idx:end_idx])
+
+
+def _find_related_questions(transcript_segment, questions_list):
+    """Use Hugging Face to identify which questions are related to a transcript segment.
+
+    Returns a list of question db_ids sorted by relevance (most relevant first),
+    or empty list on failure.
+    """
+    import os
+    import json as _json
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError:
+        return []
+    api_key = os.environ.get("HF_API_KEY") or (st.secrets["HF_API_KEY"] if "HF_API_KEY" in st.secrets else "")
+    if not api_key:
+        return []
+    model_id = os.environ.get("HF_MODEL") or (st.secrets["HF_MODEL"] if "HF_MODEL" in st.secrets else "Qwen/Qwen2.5-72B-Instruct")
+
+    # Build a numbered list of questions for the prompt
+    q_list_str = ""
+    id_map = {}  # index -> db_id
+    for i, q in enumerate(questions_list):
+        q_list_str += f"{i + 1}. {q['question'][:120]}\n"
+        id_map[i + 1] = q["db_id"]
+
+    system_prompt = (
+        "You are an educational content matcher. Given a video transcript segment and a list of questions, "
+        "identify which questions are related to the content in the transcript segment. "
+        "Return ONLY a JSON array of the question numbers (1-based) sorted by relevance (most relevant first). "
+        "Only include questions that are clearly related to the transcript content. "
+        "If no questions are related, return an empty array []."
+    )
+    user_prompt = (
+        f"Transcript segment:\n{transcript_segment[:4000]}\n\n"
+        f"Questions:\n{q_list_str[:4000]}\n\n"
+        f"Return ONLY a JSON array of question numbers, e.g. [3, 7, 1]"
+    )
+    try:
+        client = InferenceClient(token=api_key)
+        response = client.chat_completion(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=500,
+            temperature=0.3,
+        )
+        text = response.choices[0].message.content.strip()
+        if "```" in text:
+            text = text.split("```json")[-1].split("```")[0].strip() if "```json" in text else text.split("```")[1].split("```")[0].strip()
+        nums = _json.loads(text)
+        if isinstance(nums, list):
+            return [id_map[n] for n in nums if n in id_map]
+    except Exception:
+        pass
+    return []
+
+
 def _show_generate_questions_inline(test_id, material_id, transcript_text):
     """Inline question generator (replaces broken @st.dialog)."""
     st.subheader(t("generate_questions_title"))
@@ -3578,14 +3663,17 @@ def show_test_editor():
     _seg_warnings = []
     q_db_ids_warn = [q["db_id"] for q in questions]
     all_q_mat_links_warn = get_question_material_links_bulk(q_db_ids_warn) if q_db_ids_warn else {}
-    # Build reverse map: material_id -> list of question timestamps (in seconds)
+    # Build reverse map: material_id -> list of (db_id, timestamp_secs)
     _mat_q_times = {}
+    # Also build set of db_ids already linked to each material
+    _mat_linked_dbids = {}
     for db_id, links in all_q_mat_links_warn.items():
         for lk in links:
             mid = lk["material_id"]
             ctx = lk.get("context", "").strip()
+            _mat_linked_dbids.setdefault(mid, set()).add(db_id)
             if ctx:
-                _mat_q_times.setdefault(mid, []).append(_time_to_secs(ctx))
+                _mat_q_times.setdefault(mid, []).append((db_id, _time_to_secs(ctx)))
 
     for mat in materials:
         if mat.get("material_type") != "youtube":
@@ -3607,24 +3695,181 @@ def show_test_editor():
         mat_label = mat.get("title") or mat.get("url") or "?"
         q_times = _mat_q_times.get(mat["id"], [])
         prev_t = 0
-        for stop in stops:
+        for si, stop in enumerate(stops):
             stop_t = stop["t"]
             needed = stop.get("n", 1)
-            # Count questions in this segment [prev_t, stop_t)
-            available_count = sum(1 for qt in q_times if prev_t <= qt < stop_t)
+            available_count = sum(1 for _, qt in q_times if prev_t <= qt < stop_t)
             if available_count < needed:
                 _seg_warnings.append({
                     "material": mat_label,
+                    "mat_id": mat["id"],
                     "start": _seconds_to_mmss(prev_t),
                     "end": _seconds_to_mmss(stop_t),
+                    "start_secs": prev_t,
+                    "end_secs": stop_t,
                     "needed": needed,
                     "available": available_count,
+                    "stop_idx": si,
+                    "stops": stops,
+                    "transcript": mat.get("transcript", ""),
                 })
             prev_t = stop_t
-        # Last segment: from last pause to end — check if there are questions after the last stop
-        # (no pause after, so no warning needed for the tail)
 
-    if _seg_warnings:
+    if _seg_warnings and not read_only:
+        with st.expander(f"⚠️ {t('warnings')} ({len(_seg_warnings)})", expanded=True):
+            for wi, w in enumerate(_seg_warnings):
+                wkey = f"warn_{w['mat_id']}_{w['stop_idx']}"
+                st.warning(t("segment_missing_questions",
+                             material=w["material"], start=w["start"], end=w["end"],
+                             needed=w["needed"], available=w["available"]))
+                btn_cols = st.columns([1, 1, 1, 1])
+                # Button 1: Reduce pause count
+                with btn_cols[0]:
+                    if st.button("📉", key=f"{wkey}_reduce", help=t("reduce_pause_count", n=w["available"])):
+                        new_stops = list(w["stops"])
+                        new_stops[w["stop_idx"]]["n"] = max(w["available"], 1) if w["available"] > 0 else 0
+                        # If reducing to 0, remove the stop entirely
+                        if new_stops[w["stop_idx"]]["n"] == 0:
+                            new_stops.pop(w["stop_idx"])
+                        update_material_pause_times(w["mat_id"], _json_warn.dumps(new_stops))
+                        st.success(t("pause_count_updated"))
+                        st.rerun()
+                # Button 2: Link existing questions
+                with btn_cols[1]:
+                    link_key = f"{wkey}_link_open"
+                    if st.button("🔗", key=f"{wkey}_link", help=t("link_existing_questions")):
+                        st.session_state[link_key] = not st.session_state.get(link_key, False)
+                        st.rerun()
+                # Button 3: Create new question
+                with btn_cols[2]:
+                    create_key = f"{wkey}_create_open"
+                    if st.button("➕", key=f"{wkey}_create", help=t("create_question_for_segment")):
+                        st.session_state[create_key] = not st.session_state.get(create_key, False)
+                        st.rerun()
+                # Button 4: Show transcript for segment
+                with btn_cols[3]:
+                    transcript_key = f"{wkey}_transcript_open"
+                    if st.button("📜", key=f"{wkey}_transcript", help=t("transcript")):
+                        st.session_state[transcript_key] = not st.session_state.get(transcript_key, False)
+                        st.rerun()
+
+                # Inline: transcript for segment
+                transcript_key = f"{wkey}_transcript_open"
+                if st.session_state.get(transcript_key):
+                    with st.container(border=True):
+                        seg_text = _extract_segment_transcript(w.get("transcript", ""), w["start_secs"], w["end_secs"])
+                        if seg_text:
+                            st.text_area(
+                                f"{t('transcript')} ({w['start']} → {w['end']})",
+                                value=seg_text, height=200, disabled=True,
+                                key=f"{wkey}_transcript_area",
+                            )
+                        else:
+                            st.info(t("no_transcript"))
+
+                # Inline: link existing questions
+                link_key = f"{wkey}_link_open"
+                if st.session_state.get(link_key):
+                    with st.container(border=True):
+                        st.write(t("select_questions_to_link", start=w["start"], end=w["end"]))
+                        # Show unlinked questions for this material/segment
+                        linked_to_mat = _mat_linked_dbids.get(w["mat_id"], set())
+                        unlinked_qs = [q for q in questions if q["db_id"] not in linked_to_mat]
+                        if not unlinked_qs:
+                            st.info(t("no_matching_questions"))
+                        else:
+                            # Use AI to find related questions (cached in session state)
+                            ai_key = f"{wkey}_ai_related"
+                            if ai_key not in st.session_state:
+                                seg_text = _extract_segment_transcript(w.get("transcript", ""), w["start_secs"], w["end_secs"])
+                                if seg_text:
+                                    with st.spinner(t("analyzing_questions")):
+                                        st.session_state[ai_key] = _find_related_questions(seg_text, unlinked_qs)
+                                else:
+                                    st.session_state[ai_key] = []
+                            ai_related = st.session_state.get(ai_key, [])
+                            ai_related_set = set(ai_related)
+
+                            # Sort: AI-suggested first (in relevance order), then the rest
+                            if ai_related:
+                                ai_order = {db_id: i for i, db_id in enumerate(ai_related)}
+                                sorted_qs = sorted(unlinked_qs, key=lambda q: ai_order.get(q["db_id"], len(ai_related) + q["id"]))
+                            else:
+                                sorted_qs = unlinked_qs
+
+                            sel_key = f"{wkey}_link_sel"
+                            if sel_key not in st.session_state:
+                                # Pre-select AI-suggested questions
+                                st.session_state[sel_key] = set(ai_related)
+                            for q in sorted_qs:
+                                is_sel = q["db_id"] in st.session_state[sel_key]
+                                label = f"#{q['id']} — {q['question'][:80]}"
+                                if q["db_id"] in ai_related_set:
+                                    label = f"#{q['id']} — {t('ai_suggested')} — {q['question'][:70]}"
+                                if st.checkbox(label, value=is_sel, key=f"{wkey}_lq_{q['db_id']}"):
+                                    st.session_state[sel_key].add(q["db_id"])
+                                else:
+                                    st.session_state[sel_key].discard(q["db_id"])
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                selected_ids = st.session_state.get(sel_key, set())
+                                if st.button(t("link_selected"), key=f"{wkey}_link_confirm", type="primary", disabled=len(selected_ids) == 0):
+                                    # Compute a timestamp in the middle of the segment for the context
+                                    mid_secs = (w["start_secs"] + w["end_secs"]) // 2
+                                    ctx_str = _seconds_to_mmss(mid_secs)
+                                    for db_id in selected_ids:
+                                        existing = get_question_material_links(db_id)
+                                        existing.append({"material_id": w["mat_id"], "context": ctx_str})
+                                        set_question_material_links(db_id, existing)
+                                    st.session_state.pop(sel_key, None)
+                                    st.session_state.pop(ai_key, None)
+                                    st.session_state.pop(link_key, None)
+                                    st.success(t("questions_linked", n=len(selected_ids)))
+                                    st.rerun()
+                            with c2:
+                                if st.button(t("cancel"), key=f"{wkey}_link_cancel"):
+                                    st.session_state.pop(sel_key, None)
+                                    st.session_state.pop(ai_key, None)
+                                    st.session_state.pop(link_key, None)
+                                    st.rerun()
+
+                # Inline: create new question for segment
+                create_key = f"{wkey}_create_open"
+                if st.session_state.get(create_key):
+                    with st.container(border=True):
+                        all_tags_warn = get_test_tags(test_id)
+                        tag_opts = all_tags_warn if all_tags_warn else ["general"]
+                        new_q_tag = st.selectbox(t("topic_label"), options=tag_opts, key=f"{wkey}_new_tag")
+                        new_q_text = st.text_area(t("question_label"), key=f"{wkey}_new_text")
+                        new_q_opts = []
+                        for oi in range(4):
+                            new_q_opts.append(st.text_input(t("option_n", n=oi + 1), key=f"{wkey}_new_opt_{oi}"))
+                        new_q_ans = st.selectbox(
+                            t("correct_answer_select"), range(4),
+                            format_func=lambda i: new_q_opts[i] if new_q_opts[i] else f"{i + 1}",
+                            key=f"{wkey}_new_ans",
+                        )
+                        new_q_expl = st.text_area(t("explanation_label"), key=f"{wkey}_new_expl")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button(t("save_question"), key=f"{wkey}_create_save", type="primary"):
+                                if new_q_text.strip():
+                                    next_num = get_next_question_num(test_id)
+                                    mid_secs = (w["start_secs"] + w["end_secs"]) // 2
+                                    ctx_str = _seconds_to_mmss(mid_secs)
+                                    opts = [o for o in new_q_opts if o.strip()]
+                                    if len(opts) < 2:
+                                        opts = [t("option_a"), t("option_b")]
+                                    q_id = add_question(test_id, next_num, new_q_tag, new_q_text.strip(), opts, min(new_q_ans, len(opts) - 1), new_q_expl.strip())
+                                    set_question_material_links(q_id, [{"material_id": w["mat_id"], "context": ctx_str}])
+                                    st.session_state.pop(create_key, None)
+                                    st.success(t("question_created_for_segment"))
+                                    st.rerun()
+                        with c2:
+                            if st.button(t("cancel"), key=f"{wkey}_create_cancel"):
+                                st.session_state.pop(create_key, None)
+                                st.rerun()
+    elif _seg_warnings and read_only:
         with st.expander(f"⚠️ {t('warnings')} ({len(_seg_warnings)})", expanded=True):
             for w in _seg_warnings:
                 st.warning(t("segment_missing_questions",
