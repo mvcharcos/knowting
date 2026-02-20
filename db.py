@@ -605,12 +605,16 @@ def user_exists(email):
 
 
 def get_or_create_google_user(email, name):
-    res = _sb().table("users").select("id").eq("username", email).execute()
+    res = _sb().table("users").select("id, display_name").eq("username", email).execute()
     if res.data:
+        # Update display_name if not set yet
+        if name and not res.data[0].get("display_name"):
+            _sb().table("users").update({"display_name": name}).eq("id", res.data[0]["id"]).execute()
         return res.data[0]["id"]
     try:
         ins = _sb().table("users").insert({
-            "username": email, "password_hash": "oauth_google", "salt": "oauth", "global_role": "tester",
+            "username": email, "password_hash": "oauth_google", "salt": "oauth",
+            "display_name": name, "global_role": "tester",
         }).execute()
         return ins.data[0]["id"]
     except Exception:

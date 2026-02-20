@@ -71,7 +71,8 @@ def _try_login():
                     user_id = get_or_create_google_user(email, name)
                     resolve_collaborator_user_id(email, user_id)
                     st.session_state.user_id = user_id
-                    st.session_state.username = name
+                    st.session_state.username = email
+                    st.session_state.display_name = name
                 else:
                     # New user - store pending registration for terms acceptance
                     st.session_state.pending_registration = {
@@ -2086,7 +2087,8 @@ def show_terms_acceptance():
                 user_id = get_or_create_google_user(email, name)
                 resolve_collaborator_user_id(email, user_id)
                 st.session_state.user_id = user_id
-                st.session_state.username = name
+                st.session_state.username = email
+                st.session_state.display_name = name
                 # Clear pending registration
                 del st.session_state.pending_registration
                 st.rerun()
@@ -3165,7 +3167,7 @@ def show_create_test():
         if not title.strip():
             st.warning(t("title_required"))
         else:
-            author = st.session_state.get("username", "")
+            author = st.session_state.get("display_name", st.session_state.get("username", ""))
             test_id = create_test(st.session_state.user_id, title.strip(), description.strip(), author, language)
 
             if uploaded_json is not None:
@@ -3180,7 +3182,7 @@ def show_create_test():
                                         data.get("visibility", "public"))
                         elif data.get("visibility") or data.get("language"):
                             update_test(test_id, title.strip(), description.strip(),
-                                        st.session_state.get("username", ""),
+                                        st.session_state.get("display_name", st.session_state.get("username", "")),
                                         data.get("language", language),
                                         data.get("visibility", "public"))
 
@@ -4241,7 +4243,7 @@ def _get_avatar_html(avatar_bytes, size=35):
     if avatar_bytes:
         b64 = base64.b64encode(avatar_bytes).decode()
         return f'<img src="data:image/png;base64,{b64}" style="width:{size}px;height:{size}px;border-radius:50%;object-fit:cover;">'
-    initial = st.session_state.get("username", "?")[0].upper()
+    initial = st.session_state.get("display_name", st.session_state.get("username", "?"))[0].upper()
     return (
         f'<div style="width:{size}px;height:{size}px;border-radius:50%;'
         f'background:#4A90D9;color:white;display:flex;align-items:center;'
@@ -4430,7 +4432,7 @@ def show_profile():
     st.header(t("profile_header"))
 
     profile = get_user_profile(st.session_state.user_id)
-    current_name = profile["display_name"] or st.session_state.username
+    current_name = profile["display_name"] or st.session_state.get("display_name", st.session_state.get("username", ""))
     current_avatar = profile["avatar"]
 
     if current_avatar:
@@ -4462,7 +4464,6 @@ def show_profile():
 
         st.session_state.display_name = display_name
         st.session_state.avatar_bytes = avatar_data
-        st.session_state.username = display_name
         st.success(t("profile_updated"))
         st.session_state.page = st.session_state.get("prev_page", "Tests")
         st.rerun()
