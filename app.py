@@ -5911,10 +5911,10 @@ def main():
 
     logged_in = _is_logged_in()
     _is_tester_user = logged_in and _get_global_role() == "tester"
-    _show_full_ui = logged_in and not _is_tester_user  # visitors see full UI
+    _show_full_ui = not _is_tester_user  # everyone sees full UI except testers
 
-    # Redirect tester/non-logged-in users away from Home to Tests
-    if st.session_state.page == "Home" and not _show_full_ui:
+    # Redirect tester users away from Home to Tests
+    if st.session_state.page == "Home" and _is_tester_user:
         st.session_state.page = "Tests"
 
     # Top bar: title + avatar/login (hidden for non-logged-in and tester users)
@@ -5958,16 +5958,17 @@ def main():
 
     # Sidebar navigation
     is_tester = logged_in and _get_global_role() == "tester"
-    show_full_ui = logged_in and not is_tester
+    show_full_ui = not is_tester  # everyone sees full UI except testers
     with st.sidebar:
-        # Logo - hidden for non-logged-in and tester users
+        # Logo - hidden for tester users only
         if show_full_ui:
             st.image("assets/KnowtingLogo.png", use_container_width=True)
-            role_key = f"global_role_{_get_global_role()}"
-            role_label = t(role_key)
-            st.caption(f"<div style='text-align:center;'>{role_label}</div>", unsafe_allow_html=True)
+            if logged_in:
+                role_key = f"global_role_{_get_global_role()}"
+                role_label = t(role_key)
+                st.caption(f"<div style='text-align:center;'>{role_label}</div>", unsafe_allow_html=True)
 
-        # Language toggle - hidden for non-logged-in and tester users
+        # Language toggle - hidden for tester users only
         if show_full_ui:
             current_lang = st.session_state.get("lang", "es")
             current_idx = UI_LANGUAGES.index(current_lang) if current_lang in UI_LANGUAGES else 0
@@ -6026,22 +6027,22 @@ def main():
 
     if logged_in and st.session_state.page == "Perfil":
         show_profile()
-    elif logged_in and st.session_state.page == "Dashboard" and not st.session_state.quiz_started:
-        if _is_visitor():
-            _show_visitor_preview_dashboard()
-        else:
+    elif st.session_state.page == "Dashboard" and not st.session_state.quiz_started:
+        if logged_in and not _is_visitor():
             show_dashboard()
+        else:
+            _show_visitor_preview_dashboard()
     elif st.session_state.page == "Configurar Test":
         show_test_config()
     elif logged_in and st.session_state.page == "Crear Test" and _can_create_tests():
         show_create_test()
     elif logged_in and st.session_state.page == "Editar Test":
         show_test_editor()
-    elif logged_in and st.session_state.page == "Cursos" and not st.session_state.quiz_started:
-        if _is_visitor():
-            _show_visitor_preview_programs()
-        else:
+    elif st.session_state.page == "Cursos" and not st.session_state.quiz_started:
+        if logged_in and not _is_visitor():
             show_programs()
+        else:
+            _show_visitor_preview_programs()
     elif logged_in and st.session_state.page == "Crear Curso":
         show_create_program()
     elif logged_in and st.session_state.page == "Editar Curso":

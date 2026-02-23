@@ -4,6 +4,8 @@
 
 Built with [Streamlit](https://streamlit.io) and [Supabase](https://supabase.com).
 
+**Live demo:** [https://knowting-club.streamlit.app/](https://knowting-club.streamlit.app/) — try the app without any setup to see it in action.
+
 ## Features
 
 - **Interactive quizzes** — Multiple-choice questions with explanations, topic tags, and performance tracking
