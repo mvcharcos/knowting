@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
     salt TEXT NOT NULL,
     display_name TEXT,
     avatar BYTEA,
-    global_role TEXT DEFAULT 'tester'
+    global_role TEXT DEFAULT 'visitor'
 );
 
 -- 2. Tests

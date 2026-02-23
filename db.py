@@ -581,7 +581,7 @@ def create_user(username, password):
     hashed, salt = _hash_password(password)
     try:
         _sb().table("users").insert({
-            "username": username, "password_hash": hashed, "salt": salt, "global_role": "tester",
+            "username": username, "password_hash": hashed, "salt": salt, "global_role": "visitor",
         }).execute()
         return True
     except Exception:
@@ -614,7 +614,7 @@ def get_or_create_google_user(email, name):
     try:
         ins = _sb().table("users").insert({
             "username": email, "password_hash": "oauth_google", "salt": "oauth",
-            "display_name": name, "global_role": "tester",
+            "display_name": name, "global_role": "visitor",
         }).execute()
         return ins.data[0]["id"]
     except Exception:
@@ -863,13 +863,13 @@ def get_user_global_role(user_id):
 
 
 def set_user_global_role(user_id, role):
-    if role not in ("knower", "knowter", "tester", "admin"):
+    if role not in ("tester", "visitor", "knower", "knowter", "admin"):
         raise ValueError(f"Invalid role: {role}")
     _sb().table("users").update({"global_role": role}).eq("id", user_id).execute()
 
 
 def set_user_global_role_by_email(email, role):
-    if role not in ("knower", "knowter", "tester", "admin"):
+    if role not in ("tester", "visitor", "knower", "knowter", "admin"):
         raise ValueError(f"Invalid role: {role}")
     _sb().table("users").update({"global_role": role}).eq("username", email).execute()
 
@@ -1418,7 +1418,7 @@ def revoke_survey_based_access(user_id):
     _sb().table("user_survey_status").update({
         "access_revoked": True, "revoked_at": "now()",
     }).eq("user_id", user_id).execute()
-    _sb().table("users").update({"global_role": "knower"}).eq("id", user_id).execute()
+    _sb().table("users").update({"global_role": "visitor"}).eq("id", user_id).execute()
 
 
 def put_access_on_hold(user_id):
@@ -1433,6 +1433,11 @@ def release_access_hold(user_id):
     }).eq("user_id", user_id).execute()
 
 
+def approve_knower_access(user_id):
+    _sb().table("user_survey_status").update({"pending_approval": False}).eq("user_id", user_id).execute()
+    _sb().table("users").update({"global_role": "knower"}).eq("id", user_id).execute()
+
+
 def approve_knowter_access(user_id):
     _sb().table("user_survey_status").update({"pending_approval": False}).eq("user_id", user_id).execute()
     _sb().table("users").update({"global_role": "knowter"}).eq("id", user_id).execute()
@@ -1440,15 +1445,22 @@ def approve_knowter_access(user_id):
 
 def get_users_pending_approval():
     res = _sb().table("user_survey_status").select(
-        "user_id, last_periodic_survey_date, users(username, display_name)"
+        "user_id, last_periodic_survey_date, users(username, display_name, global_role)"
     ).eq("pending_approval", True).eq("access_revoked", False).execute()
     result = []
     for r in res.data:
         u = r.get("users") or {}
+        current_role = u.get("global_role") or "visitor"
+        # Infer requested role from current role
+        if current_role == "visitor":
+            requested_role = "knower"
+        else:
+            requested_role = "knowter"
         result.append({
             "user_id": r["user_id"], "email": u.get("username", ""),
             "display_name": u.get("display_name") or u.get("username", ""),
             "survey_date": r["last_periodic_survey_date"],
+            "current_role": current_role, "requested_role": requested_role,
         })
     return result
 
@@ -1461,7 +1473,7 @@ def get_users_needing_survey():
     result = []
     for r in res.data:
         u = r.get("users") or {}
-        if u.get("global_role") != "knowter":
+        if u.get("global_role") not in ("knower", "knowter"):
             continue
         result.append({
             "user_id": r["user_id"], "email": u.get("username", ""),
@@ -1482,7 +1494,7 @@ def get_users_with_overdue_surveys():
     result = []
     for r in res.data:
         u = r.get("users") or {}
-        if u.get("global_role") != "knowter":
+        if u.get("global_role") not in ("knower", "knowter"):
             continue
         result.append({
             "user_id": r["user_id"], "email": u.get("username", ""),

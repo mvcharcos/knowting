@@ -33,7 +33,7 @@ from db import (
     add_survey_question, update_survey_question, delete_survey_question, get_survey_questions, get_next_survey_question_num,
     submit_survey_response, has_completed_survey, get_survey_responses, get_survey_response_answers, get_survey_answer_statistics,
     get_user_survey_status, create_user_survey_status, update_user_survey_status,
-    revoke_survey_based_access, approve_knowter_access,
+    revoke_survey_based_access, approve_knower_access, approve_knowter_access,
     get_users_pending_approval, get_users_needing_survey, get_users_with_overdue_surveys, get_pending_approval_count,
 )
 
@@ -1884,22 +1884,52 @@ def show_home_page():
 
     st.divider()
 
+    # Open Source section
+    with st.container(border=True):
+        col_icon, col_text = st.columns([0.5, 5])
+        with col_icon:
+            st.markdown(
+                '<a href="https://github.com/mvcharcos/knowting" target="_blank">'
+                '<svg height="64" viewBox="0 0 16 16" width="64" style="fill:currentColor;">'
+                '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38'
+                ' 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15'
+                '-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51'
+                '-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0'
+                ' 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2'
+                '-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29'
+                '.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8'
+                'c0-4.42-3.58-8-8-8z"/></svg></a>',
+                unsafe_allow_html=True,
+            )
+        with col_text:
+            st.subheader(t("home_opensource_title"))
+            st.write(t("home_opensource_text"))
+            st.write(t("home_opensource_contribute"))
+        st.link_button(
+            f"GitHub — {t('home_opensource_btn')}",
+            url="https://github.com/mvcharcos/knowting",
+            type="secondary",
+        )
+
+    st.divider()
+
     # Plans section
     st.subheader(f"📋 {t('home_plans_title')}")
 
     logged_in = _is_logged_in()
     current_role = _get_global_role() if logged_in else None
+    pending_approval = logged_in and _is_pending_approval()
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
-    # Visitor plan (no login)
+    # No-registration plan (no login)
     with col1:
         with st.container(border=True):
             st.markdown(f"### 👁️ {t('home_plan_visitor')}")
             st.caption(t("home_plan_visitor_desc"))
             st.markdown("---")
             st.markdown(f"✅ {t('home_feature_take_public_tests')}")
-            st.markdown(f"✅ {t('home_feature_view_materials')}")
+            st.markdown("&nbsp;")
             st.markdown("&nbsp;")
             st.markdown("&nbsp;")
             st.markdown("&nbsp;")
@@ -1911,14 +1941,37 @@ def show_home_page():
                     st.session_state.page = "Tests"
                     st.rerun()
 
-    # Knower plan (free)
+    # Visitor plan (registered, default)
     with col2:
+        is_current = logged_in and current_role == "visitor"
+        with st.container(border=True):
+            st.markdown(f"### 🔑 {t('global_role_visitor')}")
+            st.caption(t("home_plan_visitor_access"))
+            if is_current:
+                st.success(t("home_current_plan"))
+            st.markdown("---")
+            st.markdown(f"✅ {t('home_feature_take_public_tests')}")
+            st.markdown(f"✅ {t('home_feature_view_materials')}")
+            st.markdown(f"👁️ {t('home_feature_track_progress')}")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("&nbsp;")
+            st.markdown("---")
+            if not logged_in:
+                st.button("🔑", on_click=st.login, help=t("login_with_google"), key="visitor_login", width="stretch")
+
+    # Knower plan (upgraded via survey)
+    with col3:
         is_current = logged_in and current_role == "knower"
+        is_visitor = logged_in and current_role == "visitor"
         with st.container(border=True):
             st.markdown(f"### 🎓 {t('home_plan_knower')}")
             st.caption(t("home_plan_knower_access"))
             if is_current:
                 st.success(t("home_current_plan"))
+            elif is_visitor and pending_approval:
+                st.info(t("pending_admin_review"))
             st.markdown("---")
             st.markdown(f"✅ {t('home_feature_take_public_tests')}")
             st.markdown(f"✅ {t('home_feature_view_materials')}")
@@ -1926,13 +1979,38 @@ def show_home_page():
             st.markdown(f"✅ {t('home_feature_upload_materials')}")
             st.markdown(f"✅ {t('home_feature_track_progress')}")
             st.markdown(f"✅ {t('home_feature_invite_collaborators')}")
-            st.markdown("&nbsp;")
+            st.markdown(f"📋 {t('home_feature_periodic_survey')}")
             st.markdown("---")
             if not logged_in:
                 st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knower_login", width="stretch")
+            elif is_visitor:
+                if _is_pending_approval():
+                    st.info(t("pending_admin_review"))
+                elif st.session_state.get("_confirm_knower"):
+                    st.warning(t("upgrade_survey_warning"))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button(t("confirm"), key="confirm_knower_yes", type="primary", use_container_width=True):
+                            user_id = st.session_state.get("user_id")
+                            status = get_user_survey_status(user_id)
+                            if not status:
+                                create_user_survey_status(user_id, "survey", initial_completed=False, pending_approval=True)
+                            else:
+                                update_user_survey_status(user_id, pending_approval=True)
+                            del st.session_state._confirm_knower
+                            st.success(t("access_request_sent"))
+                            st.rerun()
+                    with c2:
+                        if st.button(t("cancel"), key="confirm_knower_no", use_container_width=True):
+                            del st.session_state._confirm_knower
+                            st.rerun()
+                else:
+                    if st.button(t("become_knower"), key="become_knower_btn", width="stretch"):
+                        st.session_state._confirm_knower = True
+                        st.rerun()
 
-    # Knowter plan (premium)
-    with col3:
+    # Knowter plan (upgraded via survey)
+    with col4:
         is_current = logged_in and current_role == "knowter"
         is_knower = logged_in and current_role == "knower"
         with st.container(border=True):
@@ -1940,6 +2018,8 @@ def show_home_page():
             st.caption(t("home_plan_knowter_access"))
             if is_current:
                 st.success(t("home_current_plan"))
+            elif is_knower and pending_approval:
+                st.info(t("pending_admin_review"))
             st.markdown("---")
             st.markdown(f"✅ {t('home_feature_take_public_tests')}")
             st.markdown(f"✅ {t('home_feature_view_materials')}")
@@ -1955,22 +2035,30 @@ def show_home_page():
             if not logged_in:
                 st.button("🔑", on_click=st.login, help=t("login_with_google"), key="knowter_login", width="stretch")
             elif is_knower:
-                # Check if user already has a pending request
-                #status = get_user_survey_status(st.session_state.get("user_id"))
-                #if status and status.get("pending_approval"):
-                #    st.info(t("pending_admin_review"))
-                #else:
-                    # Show "Become Knowter" button for knowers who want to upgrade
-                #    if st.button(t("become_knowter"), key="become_knowter_btn", width="stretch"):
-                #        st.session_state.page = "Choose Access Type"
-                #        st.rerun()
-                # Knowter plan coming soon - button disabled
-                st.button(
-                    f"{t('become_knowter')} ({t('paid_plan_coming_soon')})",
-                    key="become_knowter_btn",
-                    width="stretch",
-                    disabled=True
-                )
+                if _is_pending_approval():
+                    st.info(t("pending_admin_review"))
+                elif st.session_state.get("_confirm_knowter"):
+                    st.warning(t("upgrade_survey_warning"))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button(t("confirm"), key="confirm_knowter_yes", type="primary", use_container_width=True):
+                            user_id = st.session_state.get("user_id")
+                            status = get_user_survey_status(user_id)
+                            if not status:
+                                create_user_survey_status(user_id, "survey", initial_completed=False, pending_approval=True)
+                            else:
+                                update_user_survey_status(user_id, pending_approval=True)
+                            del st.session_state._confirm_knowter
+                            st.success(t("access_request_sent"))
+                            st.rerun()
+                    with c2:
+                        if st.button(t("cancel"), key="confirm_knowter_no", use_container_width=True):
+                            del st.session_state._confirm_knowter
+                            st.rerun()
+                else:
+                    if st.button(t("become_knowter"), key="become_knowter_btn", width="stretch"):
+                        st.session_state._confirm_knowter = True
+                        st.rerun()
 
 
 def show_privacy_policy():
@@ -2000,54 +2088,9 @@ def show_terms_and_conditions():
 
 
 def show_choose_access_type():
-    """Show the page for choosing Knowter access type (paid or survey-based)."""
-    if st.button(f"← {t('back')}"):
-        st.session_state.page = "Home"
-        st.rerun()
-
-    st.header(t("choose_access_type"))
-    st.write(t("choose_access_type_desc"))
-
-    st.divider()
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        with st.container(border=True):
-            st.subheader(f"💳 {t('paid_plan')}")
-            st.write(t("paid_plan_desc"))
-            st.markdown("---")
-            st.markdown(f"✅ {t('home_feature_create_courses')}")
-            st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
-            st.markdown(f"🚫 {t('home_feature_periodic_survey')}")
-            st.markdown("---")
-            st.button(
-                t("paid_plan_coming_soon"),
-                key="paid_plan_btn",
-                width="stretch",
-                disabled=True
-            )
-
-    with col2:
-        with st.container(border=True):
-            st.subheader(f"📋 {t('survey_based_plan')}")
-            st.write(t("survey_based_plan_desc"))
-            st.markdown("---")
-            st.markdown(f"✅ {t('home_feature_create_courses')}")
-            st.markdown(f"✅ {t('home_feature_advanced_visibility')}")
-            st.markdown(f"📋 {t('home_feature_periodic_survey')}")
-            st.markdown("---")
-            if st.button(t("request_survey_access"), key="survey_access_btn", width="stretch"):
-                user_id = st.session_state.get("user_id")
-                # Create pending approval request
-                status = get_user_survey_status(user_id)
-                if not status:
-                    create_user_survey_status(user_id, "survey", initial_completed=False, pending_approval=True)
-                else:
-                    update_user_survey_status(user_id, pending_approval=True)
-                st.success(t("access_request_sent"))
-                st.session_state.page = "Home"
-                st.rerun()
+    """Redirect to Home — upgrade is now handled directly in the plans section."""
+    st.session_state.page = "Home"
+    st.rerun()
 
 
 def show_terms_acceptance():
@@ -2870,6 +2913,72 @@ def show_quiz():
     st.divider()
     if st.button(t("abandon_test")):
         reset_quiz()
+        st.rerun()
+
+
+def _show_visitor_preview_dashboard():
+    """Show a greyed-out preview of the dashboard for visitor users."""
+    st.header(t("dashboard"))
+    st.info(f"👁️ {t('visitor_feature_preview')}")
+
+    # Greyed-out CSS overlay
+    st.markdown(
+        '<style>.visitor-preview { opacity: 0.35; pointer-events: none; }</style>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="visitor-preview">', unsafe_allow_html=True)
+
+    # --- Fake trophies section ---
+    st.subheader(t("your_trophies"))
+    cols = st.columns(4)
+    fake_trophies = ["🏆", "📚", "🎯", "🥇", "🥈", "🥉", "🧠"]
+    for i, icon in enumerate(fake_trophies):
+        with cols[i % 4]:
+            st.markdown(f"<div style='text-align:center;font-size:2em;opacity:0.3;'>🔒</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- Fake global performance ---
+    st.subheader(t("global_performance"))
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(t("tests_taken"), "—")
+    col2.metric(t("total_questions"), "—")
+    col3.metric(t("correct_answers"), "—")
+    col4.metric(t("average_score"), "—")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown(f"### {t('visitor_upgrade_message')}")
+    if st.button(t("become_knower"), key="visitor_upgrade_dashboard", type="primary"):
+        st.session_state.page = "Home"
+        st.rerun()
+
+
+def _show_visitor_preview_programs():
+    """Show a greyed-out preview of the courses page for visitor users."""
+    st.header(t("courses_header"))
+    st.info(f"👁️ {t('visitor_feature_preview')}")
+
+    st.markdown(
+        '<style>.visitor-preview { opacity: 0.35; pointer-events: none; }</style>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="visitor-preview">', unsafe_allow_html=True)
+
+    # --- Fake course cards ---
+    st.subheader(t("my_courses"))
+    for i in range(2):
+        with st.container(border=True):
+            st.markdown(f"### 📚 ———————")
+            st.caption("— — —")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown(f"### {t('visitor_upgrade_message')}")
+    if st.button(t("become_knower"), key="visitor_upgrade_courses", type="primary"):
+        st.session_state.page = "Home"
         st.rerun()
 
 
@@ -4277,8 +4386,13 @@ def _is_global_admin():
     return _get_global_role() == "admin"
 
 
+def _is_visitor():
+    """Check if user has visitor global role."""
+    return _get_global_role() == "visitor"
+
+
 def _can_create_tests():
-    """Check if user can create tests. Students cannot create tests."""
+    """Check if user can create tests. Visitors and testers cannot create tests."""
     return _get_global_role() in ("knower", "knowter", "admin")
 
 
@@ -4344,7 +4458,7 @@ def _check_survey_deadline():
 
 
 def _is_pending_approval():
-    """Check if user is awaiting admin approval for knowter access."""
+    """Check if user is awaiting admin approval for role upgrade."""
     if not _is_logged_in():
         return False
     user_id = st.session_state.get("user_id")
@@ -4355,7 +4469,7 @@ def _is_pending_approval():
 
 
 def _needs_survey_for_feature():
-    """Check if a survey-based knowter needs to complete a survey before accessing knowter features.
+    """Check if a survey-based user needs to complete a survey before accessing features.
     Returns a tuple: (needs_survey, survey_type, survey)
     - needs_survey: True if user needs to complete a survey
     - survey_type: 'initial' or 'periodic'
@@ -4365,10 +4479,10 @@ def _needs_survey_for_feature():
         return (False, None, None)
 
     user_id = st.session_state.get("user_id")
-    current_role = st.session_state.get("current_role", "knower")
+    current_role = _get_global_role()
 
-    # Only check for knowters with survey-based access
-    if current_role != "knowter":
+    # Only check for knower/knowter with survey-based access
+    if current_role not in ("knower", "knowter"):
         return (False, None, None)
 
     status = get_user_survey_status(user_id)
@@ -4472,12 +4586,7 @@ def show_profile():
     st.divider()
     with st.expander(f"⚠️ {t('delete_account')}", expanded=False):
         st.warning(t("delete_account_warning"))
-        # Get user's email from the database
-        from db import get_connection
-        conn = get_connection()
-        row = conn.execute("SELECT username FROM users WHERE id = ?", (st.session_state.user_id,)).fetchone()
-        conn.close()
-        user_email = row[0] if row else ""
+        user_email = st.session_state.get("username", "")
 
         confirm_email = st.text_input(
             t("delete_account_confirm_email"),
@@ -4520,9 +4629,10 @@ def show_admin_panel():
     st.write(t("total_users", n=len(filtered_users)))
 
     # Role options (student role removed from global roles - only applies at test/program level)
-    role_options = ["tester", "knower", "knowter", "admin"]
+    role_options = ["tester", "visitor", "knower", "knowter", "admin"]
     role_labels = {
         "tester": t("global_role_tester"),
+        "visitor": t("global_role_visitor"),
         "knower": t("global_role_knower"),
         "knowter": t("global_role_knowter"),
         "admin": t("global_role_admin"),
@@ -4962,7 +5072,7 @@ def _show_survey_statistics(survey_id):
 
 
 def _show_pending_approvals():
-    """Show users pending approval for knowter access."""
+    """Show users pending approval for knower or knowter access."""
     pending = get_users_pending_approval()
 
     if not pending:
@@ -4977,11 +5087,17 @@ def _show_pending_approvals():
             with col_info:
                 st.write(f"**{user['display_name']}**")
                 st.caption(user["email"])
+                requested = user["requested_role"]
+                role_label = t(f"global_role_{requested}")
+                st.caption(f"→ {role_label}")
                 if user["survey_date"]:
                     st.caption(f"📅 {user['survey_date']}")
             with col_action:
                 if st.button(t("approve_access"), key=f"approve_{user['user_id']}", type="primary"):
-                    approve_knowter_access(user["user_id"])
+                    if user["requested_role"] == "knower":
+                        approve_knower_access(user["user_id"])
+                    else:
+                        approve_knowter_access(user["user_id"])
                     st.success(t("access_approved"))
                     st.rerun()
 
@@ -5795,7 +5911,7 @@ def main():
 
     logged_in = _is_logged_in()
     _is_tester_user = logged_in and _get_global_role() == "tester"
-    _show_full_ui = logged_in and not _is_tester_user
+    _show_full_ui = logged_in and not _is_tester_user  # visitors see full UI
 
     # Redirect tester/non-logged-in users away from Home to Tests
     if st.session_state.page == "Home" and not _show_full_ui:
@@ -5847,6 +5963,9 @@ def main():
         # Logo - hidden for non-logged-in and tester users
         if show_full_ui:
             st.image("assets/KnowtingLogo.png", use_container_width=True)
+            role_key = f"global_role_{_get_global_role()}"
+            role_label = t(role_key)
+            st.caption(f"<div style='text-align:center;'>{role_label}</div>", unsafe_allow_html=True)
 
         # Language toggle - hidden for non-logged-in and tester users
         if show_full_ui:
@@ -5908,15 +6027,21 @@ def main():
     if logged_in and st.session_state.page == "Perfil":
         show_profile()
     elif logged_in and st.session_state.page == "Dashboard" and not st.session_state.quiz_started:
-        show_dashboard()
+        if _is_visitor():
+            _show_visitor_preview_dashboard()
+        else:
+            show_dashboard()
     elif st.session_state.page == "Configurar Test":
         show_test_config()
-    elif logged_in and st.session_state.page == "Crear Test":
+    elif logged_in and st.session_state.page == "Crear Test" and _can_create_tests():
         show_create_test()
     elif logged_in and st.session_state.page == "Editar Test":
         show_test_editor()
     elif logged_in and st.session_state.page == "Cursos" and not st.session_state.quiz_started:
-        show_programs()
+        if _is_visitor():
+            _show_visitor_preview_programs()
+        else:
+            show_programs()
     elif logged_in and st.session_state.page == "Crear Curso":
         show_create_program()
     elif logged_in and st.session_state.page == "Editar Curso":
