@@ -880,6 +880,18 @@ def get_all_users_with_roles():
              "global_role": r.get("global_role") or "knower"} for r in res.data]
 
 
+def get_app_stats():
+    """Return counts of users, public tests, and public programs."""
+    users = _sb().table("users").select("id", count="exact").execute()
+    tests = _sb().table("tests").select("id", count="exact").eq("visibility", "public").execute()
+    programs = _sb().table("programs").select("id", count="exact").eq("visibility", "public").execute()
+    return {
+        "users": users.count or 0,
+        "tests": tests.count or 0,
+        "programs": programs.count or 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Favorites
 # ---------------------------------------------------------------------------
@@ -1524,3 +1536,37 @@ def get_global_statistics():
             "materials": r["materials_count"],
         }
     return {"users": 0, "tests": 0, "courses": 0, "sessions": 0, "materials": 0}
+
+
+# ---------------------------------------------------------------------------
+# Concept Graph Cache
+# ---------------------------------------------------------------------------
+
+def get_concept_graph(video_id, approach):
+    """Return the cached concept graph for (video_id, approach), or None if absent or table missing."""
+    try:
+        res = (
+            _sb()
+            .table("concept_graphs")
+            .select("graph_json, created_at, updated_at")
+            .eq("video_url", video_id)
+            .eq("approach", approach)
+            .execute()
+        )
+        if not res.data:
+            return None
+        r = res.data[0]
+        return {"graph_json": r["graph_json"], "created_at": r["created_at"], "updated_at": r["updated_at"]}
+    except Exception:
+        return None
+
+
+def save_concept_graph(video_id, approach, graph_data):
+    """Insert or update the concept graph cache for (video_id, approach)."""
+    try:
+        _sb().table("concept_graphs").upsert(
+            {"video_url": video_id, "approach": approach, "graph_json": graph_data, "updated_at": "now()"},
+            on_conflict="video_url,approach",
+        ).execute()
+    except Exception:
+        pass
