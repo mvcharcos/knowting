@@ -360,3 +360,9 @@ BEGIN
         (SELECT COUNT(*) FROM test_materials);
 END;
 $$ LANGUAGE plpgsql;
+
+-- Concept graph research extras (facts, questions, segments)
+-- Run these once to extend the concept_graphs table if already created:
+ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS facts_json JSONB;
+ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS questions_json JSONB;
+ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS segments_json JSONB;

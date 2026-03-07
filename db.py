@@ -1570,3 +1570,42 @@ def save_concept_graph(video_id, approach, graph_data):
         ).execute()
     except Exception:
         pass
+
+
+def get_research_extras(video_id, approach):
+    """Return cached facts, questions and segments for (video_id, approach).
+
+    Returns a dict with any subset of keys: facts_json, questions_json, segments_json.
+    """
+    try:
+        res = (
+            _sb()
+            .table("concept_graphs")
+            .select("facts_json, questions_json, segments_json")
+            .eq("video_url", video_id)
+            .eq("approach", approach)
+            .execute()
+        )
+        if not res.data:
+            return {}
+        r = res.data[0]
+        return {k: r[k] for k in ("facts_json", "questions_json", "segments_json") if r.get(k) is not None}
+    except Exception:
+        return {}
+
+
+def save_research_extras(video_id, approach, **kwargs):
+    """Persist one or more extras (facts_json, questions_json, segments_json) for a concept graph row.
+
+    Keyword args must be a subset of: facts_json, questions_json, segments_json.
+    """
+    allowed = {"facts_json", "questions_json", "segments_json"}
+    payload = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not payload:
+        return
+    try:
+        payload.update({"video_url": video_id, "approach": approach, "updated_at": "now()"})
+        _sb().table("concept_graphs").upsert(payload, on_conflict="video_url,approach").execute()
+    except Exception as e:
+        import logging
+        logging.warning(f"save_research_extras failed for video={video_id} approach={approach}: {e}")
