@@ -366,3 +366,53 @@ $$ LANGUAGE plpgsql;
 ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS facts_json JSONB;
 ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS questions_json JSONB;
 ALTER TABLE IF EXISTS concept_graphs ADD COLUMN IF NOT EXISTS segments_json JSONB;
+
+-- 19. Standalone Materials Library
+CREATE TABLE IF NOT EXISTS materials (
+    id SERIAL PRIMARY KEY,
+    owner_id INTEGER REFERENCES users(id),
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    material_type TEXT NOT NULL DEFAULT 'youtube_video',
+    language TEXT DEFAULT '',
+    visibility TEXT DEFAULT 'public',
+    url TEXT DEFAULT '',
+    file_data BYTEA,
+    transcript TEXT DEFAULT '',
+    graph_json JSONB,
+    facts_json JSONB,
+    questions_json JSONB,
+    segments_json JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 20. Material Collaborators
+CREATE TABLE IF NOT EXISTS material_collaborators (
+    id SERIAL PRIMARY KEY,
+    material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    user_email TEXT NOT NULL,
+    user_id INTEGER,
+    role TEXT NOT NULL CHECK(role IN ('student','guest','reviewer','admin')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','declined')),
+    invited_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(material_id, user_email)
+);
+
+-- 21. Test–Material Links (links standalone materials to tests)
+CREATE TABLE IF NOT EXISTS test_material_links (
+    id SERIAL PRIMARY KEY,
+    test_id INTEGER NOT NULL REFERENCES tests(id) ON DELETE CASCADE,
+    material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    UNIQUE(test_id, material_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_materials_owner ON materials(owner_id);
+CREATE INDEX IF NOT EXISTS idx_material_collaborators_material ON material_collaborators(material_id);
+CREATE INDEX IF NOT EXISTS idx_test_material_links_test ON test_material_links(test_id);
+
+-- Test knowledge graph (merged from linked materials)
+ALTER TABLE tests ADD COLUMN IF NOT EXISTS graph_json JSONB;
+
+-- Video segments for materials
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS segments_json JSONB;

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -234,9 +235,15 @@ def delete_test(test_id):
 
 
 def get_test(test_id):
-    res = _sb().table("tests").select(
-        "id, owner_id, title, description, author, is_public, created_at, updated_at, language, visibility"
-    ).eq("id", test_id).execute()
+    try:
+        res = _sb().table("tests").select(
+            "id, owner_id, title, description, author, is_public, created_at, updated_at, language, visibility, graph_json"
+        ).eq("id", test_id).execute()
+    except Exception:
+        # Fallback if graph_json column doesn't exist yet (run migration first)
+        res = _sb().table("tests").select(
+            "id, owner_id, title, description, author, is_public, created_at, updated_at, language, visibility"
+        ).eq("id", test_id).execute()
     if not res.data:
         return None
     r = res.data[0]
@@ -245,6 +252,7 @@ def get_test(test_id):
         "description": r["description"], "author": r["author"], "is_public": r["is_public"],
         "created_at": r["created_at"], "updated_at": r["updated_at"],
         "language": r.get("language") or "", "visibility": r.get("visibility") or "public",
+        "graph_json": r.get("graph_json"),
     }
 
 
@@ -424,6 +432,244 @@ def update_material_transcript(material_id, transcript):
 
 def update_material_pause_times(material_id, pause_times):
     _sb().table("test_materials").update({"pause_times": pause_times}).eq("id", material_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Standalone Materials Library
+# ---------------------------------------------------------------------------
+
+def get_all_materials(user_id=None):
+    """Return all materials visible to user_id (or only public ones if None)."""
+    try:
+        res = _sb().table("materials").select("*").order("updated_at", desc=True).execute()
+        rows = res.data or []
+        if user_id is None:
+            return [r for r in rows if r.get("visibility") == "public"]
+        # Fetch collaborator material_ids for this user
+        try:
+            username = _sb().table("users").select("username").eq("id", user_id).execute().data
+            user_email = username[0]["username"] if username else ""
+        except Exception:
+            user_email = ""
+        collab_res = _sb().table("material_collaborators").select("material_id").or_(
+            f"user_id.eq.{user_id},user_email.eq.{user_email}"
+        ).eq("status", "accepted").execute()
+        collab_ids = {r["material_id"] for r in (collab_res.data or [])}
+        result = []
+        for r in rows:
+            v = r.get("visibility", "public")
+            if v == "public":
+                result.append(r)
+            elif r.get("owner_id") == user_id:
+                result.append(r)
+            elif r["id"] in collab_ids and v == "restricted":
+                result.append(r)
+        return result
+    except Exception:
+        return []
+
+
+def get_material(material_id):
+    """Return a single material dict or None."""
+    try:
+        res = _sb().table("materials").select("*").eq("id", material_id).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+
+def create_material(owner_id, title, description, material_type, language, visibility, url=""):
+    """Insert a new material, return its id."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    res = _sb().table("materials").insert({
+        "owner_id": owner_id,
+        "title": title,
+        "description": description,
+        "material_type": material_type,
+        "language": language,
+        "visibility": visibility,
+        "url": url,
+        "created_at": now,
+        "updated_at": now,
+    }).execute()
+    return res.data[0]["id"] if res.data else None
+
+
+def update_material(material_id, **kwargs):
+    """Update any subset of material fields."""
+    from datetime import datetime, timezone
+    allowed = {"title", "description", "material_type", "language", "visibility", "url", "transcript"}
+    payload = {k: v for k, v in kwargs.items() if k in allowed}
+    if not payload:
+        return
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _sb().table("materials").update(payload).eq("id", material_id).execute()
+
+
+def delete_material(material_id):
+    """Delete a material (cascades to collaborators and test links)."""
+    _sb().table("materials").delete().eq("id", material_id).execute()
+
+
+def save_material_llm_data(material_id, *, transcript=None, graph_json=None, facts_json=None, questions_json=None, segments_json=None):
+    """Persist LLM-generated data for a material (only provided fields are updated)."""
+    from datetime import datetime, timezone
+    payload = {}
+    if transcript is not None:
+        payload["transcript"] = transcript
+    if graph_json is not None:
+        payload["graph_json"] = graph_json
+    if facts_json is not None:
+        payload["facts_json"] = facts_json
+    if questions_json is not None:
+        payload["questions_json"] = questions_json
+    if segments_json is not None:
+        payload["segments_json"] = segments_json
+    if not payload:
+        return
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        _sb().table("materials").update(payload).eq("id", material_id).execute()
+    except Exception as e:
+        import logging
+        logging.warning(f"save_material_llm_data failed for material={material_id}: {e}")
+
+
+def get_material_collaborators(material_id):
+    """Return list of collaborators for a material."""
+    try:
+        res = _sb().table("material_collaborators").select("*").eq("material_id", material_id).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def add_material_collaborator(material_id, email, role):
+    """Add or update a collaborator on a material."""
+    try:
+        existing = _sb().table("material_collaborators").select("id").eq("material_id", material_id).eq("user_email", email).execute()
+        if existing.data:
+            _sb().table("material_collaborators").update({"role": role}).eq("material_id", material_id).eq("user_email", email).execute()
+        else:
+            _sb().table("material_collaborators").insert({"material_id": material_id, "user_email": email, "role": role}).execute()
+    except Exception as e:
+        import logging
+        logging.warning(f"add_material_collaborator failed: {e}")
+
+
+def remove_material_collaborator(material_id, email):
+    """Remove a collaborator from a material."""
+    try:
+        _sb().table("material_collaborators").delete().eq("material_id", material_id).eq("user_email", email).execute()
+    except Exception:
+        pass
+
+
+def get_materials_for_test(test_id):
+    """Return standalone materials linked to a test via test_material_links."""
+    try:
+        links = _sb().table("test_material_links").select("material_id").eq("test_id", test_id).execute()
+        ids = [r["material_id"] for r in (links.data or [])]
+        if not ids:
+            return []
+        res = _sb().table("materials").select("*").in_("id", ids).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def _merge_graphs(graph_list):
+    """Merge multiple graph_json dicts into one, deduplicating nodes by id (which is the concept name)."""
+    graphs = [g for g in graph_list if g and g.get("nodes")]
+    if not graphs:
+        return None
+    # Nodes: id IS the concept name/label. Deduplicate by lowercase id.
+    seen_node_keys = {}  # lowercase_id -> canonical_id
+    merged_nodes = []
+    for g in graphs:
+        for node in g.get("nodes", []):
+            node_id = node.get("id", "")
+            if not node_id:
+                continue
+            key = str(node_id).strip().lower()
+            if key not in seen_node_keys:
+                seen_node_keys[key] = node_id
+                merged_nodes.append({k: v for k, v in node.items()})
+    # Edges: source/target are node ids (concept names). Deduplicate.
+    merged_edges = []
+    seen_edges = set()
+    for g in graphs:
+        for edge in g.get("edges", []):
+            src = edge.get("source", "")
+            tgt = edge.get("target", "")
+            rel = edge.get("relation", edge.get("label", ""))
+            src_key = str(src).strip().lower()
+            tgt_key = str(tgt).strip().lower()
+            if src_key not in seen_node_keys or tgt_key not in seen_node_keys:
+                continue
+            edge_key = (src_key, rel, tgt_key)
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                merged_edges.append({"source": src, "relation": rel, "target": tgt})
+    return {"nodes": merged_nodes, "edges": merged_edges}
+
+
+def _recompute_test_graph(test_id):
+    """Recompute and save the merged graph_json for a test from all its linked materials."""
+    from datetime import datetime, timezone
+    materials = get_materials_for_test(test_id)
+    graphs = [m.get("graph_json") for m in materials if m.get("graph_json")]
+    merged = _merge_graphs(graphs)
+    _sb().table("tests").update({
+        "graph_json": merged,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", test_id).execute()
+
+
+def link_material_to_test(test_id, material_id):
+    """Create a link between a test and a standalone material, then recompute test graph."""
+    try:
+        _sb().table("test_material_links").insert({"test_id": test_id, "material_id": material_id}).execute()
+    except Exception:
+        pass
+    _recompute_test_graph(test_id)
+
+
+def unlink_material_from_test(test_id, material_id):
+    """Remove the link between a test and a standalone material, then recompute test graph."""
+    try:
+        _sb().table("test_material_links").delete().eq("test_id", test_id).eq("material_id", material_id).execute()
+    except Exception:
+        pass
+    _recompute_test_graph(test_id)
+
+
+def get_test_material_questions(test_id):
+    """Return normalized question dicts from all linked materials' questions_json."""
+    materials = get_materials_for_test(test_id)
+    result = []
+    for mat in materials:
+        raw = mat.get("questions_json") or []
+        qs = raw if isinstance(raw, list) else raw.get("questions", [])
+        for i, q in enumerate(qs):
+            options = q.get("options", [])
+            if not options:
+                # Skip open-ended questions — they can't be used in MCQ quiz
+                continue
+            result.append({
+                "id": i + 1,
+                "db_id": None,  # no DB record — skipped in question_history
+                "tag": q.get("topic", q.get("tag", q.get("concept", "general"))),
+                "question": q.get("question", ""),
+                "options": options,
+                "answer_index": q.get("answer_index", 0),
+                "explanation": q.get("explanation", q.get("answer", "")),
+                "source": f"material:{mat['id']}",
+                "material_id": mat["id"],
+                "material_title": mat.get("title", ""),
+            })
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1551,6 +1797,8 @@ def get_concept_graph(video_id, approach):
             .select("graph_json, created_at, updated_at")
             .eq("video_url", video_id)
             .eq("approach", approach)
+            .order("updated_at", desc=True)
+            .limit(1)
             .execute()
         )
         if not res.data:
@@ -1563,13 +1811,27 @@ def get_concept_graph(video_id, approach):
 
 def save_concept_graph(video_id, approach, graph_data):
     """Insert or update the concept graph cache for (video_id, approach)."""
+    import logging
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    sb = _sb()
     try:
-        _sb().table("concept_graphs").upsert(
-            {"video_url": video_id, "approach": approach, "graph_json": graph_data, "updated_at": "now()"},
-            on_conflict="video_url,approach",
-        ).execute()
-    except Exception:
-        pass
+        # Try UPDATE first (clears extras too)
+        extras_clear = {}
+        try:
+            extras_clear = {"facts_json": None, "questions_json": None, "segments_json": None}
+        except Exception:
+            pass
+        res = sb.table("concept_graphs").update(
+            {"graph_json": graph_data, "updated_at": now, **extras_clear}
+        ).eq("video_url", video_id).eq("approach", approach).execute()
+        if not res.data:
+            # No existing row — insert
+            sb.table("concept_graphs").insert(
+                {"video_url": video_id, "approach": approach, "graph_json": graph_data, "updated_at": now}
+            ).execute()
+    except Exception as e:
+        logging.warning(f"save_concept_graph failed for video={video_id} approach={approach}: {e}")
 
 
 def get_research_extras(video_id, approach):
@@ -1604,8 +1866,9 @@ def save_research_extras(video_id, approach, **kwargs):
     if not payload:
         return
     try:
-        payload.update({"video_url": video_id, "approach": approach, "updated_at": "now()"})
-        _sb().table("concept_graphs").upsert(payload, on_conflict="video_url,approach").execute()
+        from datetime import datetime, timezone
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _sb().table("concept_graphs").update(payload).eq("video_url", video_id).eq("approach", approach).execute()
     except Exception as e:
         import logging
         logging.warning(f"save_research_extras failed for video={video_id} approach={approach}: {e}")

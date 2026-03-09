@@ -2,21 +2,348 @@ import random
 
 import streamlit as st
 from translations import t
-from auth import _is_logged_in, _get_global_role, _can_create_tests
+from auth import _is_logged_in, _get_global_role, _can_create_tests, _is_global_admin
 from helpers import (
     select_balanced_questions, shuffle_question_options, reset_quiz,
-    _render_material_refs, _show_material_inline, _show_study_dialog,
+    _render_material_refs,
     _lang_display, _difficulty_score, _time_to_secs,
 )
 from db import (
-    get_test, get_test_questions, get_test_materials,
+    get_test, get_test_questions,
     get_question_stats, get_test_tags,
     create_session, update_session_score, record_answer,
     get_user_role_for_test, has_direct_test_access,
     get_question_material_links,
     get_effective_visibility, get_collaborators,
     get_question_material_links_bulk, get_topic_statistics,
+    get_materials_for_test, get_test_material_questions,
 )
+
+
+def _parse_time_to_sec(time_str):
+    """Parse 'm:ss' or 'h:mm:ss' to integer seconds. Returns None on failure."""
+    if not time_str:
+        return None
+    parts = time_str.split(":")
+    try:
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except ValueError:
+        pass
+    return None
+
+
+def _fuzzy_score(a, b):
+    """Fuzzy partial ratio between two strings (0–100)."""
+    if not a or not b:
+        return 0
+    try:
+        from rapidfuzz import fuzz
+        return fuzz.partial_ratio(a.lower().strip(), b.lower().strip())
+    except ImportError:
+        a_words = set(a.lower().split())
+        b_words = set(b.lower().split())
+        return int(len(a_words & b_words) / len(a_words) * 100) if a_words else 0
+
+
+def _assign_questions_to_segments(segments, questions, facts):
+    """
+    Match questions to segments via facts (two-step chain):
+      1. fact → segment  : fact.evidence in segment.clean_text (fuzzy ≥ 65)
+      2. question → fact : same subject_concept + most similar evidence (≥ 35)
+    Returns {segment_index: [question_dicts]}.
+    """
+    FACT_SEG_THRESHOLD = 65
+    Q_FACT_MIN_SCORE = 35
+
+    # Step 1 — place each fact in its best-matching segment
+    fact_to_seg = {}
+    for fi, fact in enumerate(facts):
+        fact_ev = fact.get("evidence", "")
+        best_si, best_score = None, 0
+        for si, seg in enumerate(segments):
+            seg_clean = seg.get("clean_text", "")
+            if fact_ev.lower().strip() in seg_clean.lower():
+                fact_to_seg[fi] = si
+                break
+            score = _fuzzy_score(fact_ev, seg_clean)
+            if score > best_score:
+                best_score, best_si = score, si
+        if fi not in fact_to_seg and best_si is not None and best_score >= FACT_SEG_THRESHOLD:
+            fact_to_seg[fi] = best_si
+
+    # Step 2 — match each question to its best fact (same concept, closest evidence)
+    seg_questions = {si: [] for si in range(len(segments))}
+    seen_questions = set()
+
+    for q in questions:
+        q_text = q.get("question", "")
+        if q_text in seen_questions:
+            continue
+        q_concept = str(q.get("concept", "")).strip().lower()
+        q_evidence = q.get("evidence", "")
+
+        candidates = [
+            (fi, fact) for fi, fact in enumerate(facts)
+            if str(fact.get("subject_concept", "")).strip().lower() == q_concept
+            and fi in fact_to_seg
+        ]
+        if not candidates:
+            continue
+
+        best_fi, _ = max(candidates,
+                         key=lambda x: _fuzzy_score(q_evidence, x[1].get("evidence", "")))
+        if _fuzzy_score(q_evidence, facts[best_fi].get("evidence", "")) < Q_FACT_MIN_SCORE:
+            continue
+
+        seen_questions.add(q_text)
+        seg_questions[fact_to_seg[best_fi]].append({
+            "question": q_text,
+            "options": q.get("options", []),
+            "answer_index": q.get("answer_index", 0),
+            "answer": q.get("answer", ""),
+        })
+
+    return seg_questions
+
+
+def _build_youtube_quiz_html(mat):
+    """Return self-contained HTML for a YouTube player that pauses at segment
+    boundaries and shows questions matched via facts grounded in that segment."""
+    import json
+    from helpers import _extract_youtube_id
+
+    video_id = _extract_youtube_id(mat.get("url", ""))
+    if not video_id:
+        return None
+
+    segments = (mat.get("segments_json") or {}).get("segments", [])
+    raw_qs = mat.get("questions_json") or []
+    questions = raw_qs if isinstance(raw_qs, list) else raw_qs.get("questions", [])
+    fact_nodes = [
+        n for n in (mat.get("facts_json") or {}).get("nodes", [])
+        if n.get("kind") == "fact"
+    ]
+
+    seg_questions = _assign_questions_to_segments(segments, questions, fact_nodes)
+
+    pause_data = []
+    for si, seg in enumerate(segments):
+        end_sec = _parse_time_to_sec(seg.get("end_time", ""))
+        if end_sec is None:
+            continue
+        pause_data.append({
+            "end_sec": end_sec,
+            "summary": seg.get("summary", ""),
+            "segment_id": seg.get("segment_id", ""),
+            "questions": seg_questions.get(si, []),
+        })
+
+    pause_data_json = json.dumps(pause_data, ensure_ascii=False)
+    continue_label = t("mat_continue_video")
+    segment_label = t("mat_segment_label")
+
+    return f'''
+<style>
+  #yt-wrap {{ position: relative; font-family: sans-serif; }}
+  #yt-player {{ width: 100%; }}
+  #quiz-overlay {{
+    display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.88); flex-direction: column;
+    align-items: center; justify-content: flex-start;
+    padding: 16px; box-sizing: border-box; overflow-y: auto;
+  }}
+  #quiz-overlay.visible {{ display: flex; }}
+  #seg-info {{ color: #ccc; font-size: 13px; margin-bottom: 10px; text-align: center; }}
+  .q-card {{
+    background: #fff; border-radius: 10px; padding: 16px;
+    max-width: 580px; width: 100%; margin-bottom: 12px;
+  }}
+  .q-text {{ font-size: 15px; font-weight: bold; margin-bottom: 10px; }}
+  .opt-btn {{
+    display: block; width: 100%; text-align: left;
+    padding: 9px 13px; margin: 5px 0;
+    background: #f0f2f6; border: 2px solid #dde;
+    border-radius: 7px; cursor: pointer; font-size: 14px;
+  }}
+  .opt-btn:hover:not([disabled]) {{ background: #e0e4f5; }}
+  .opt-btn.correct {{ background: #d4edda !important; border-color: #28a745 !important; }}
+  .opt-btn.incorrect {{ background: #f8d7da !important; border-color: #dc3545 !important; }}
+  .opt-btn.show-correct {{ background: #d4edda !important; border-color: #28a745 !important; }}
+  .open-ans {{ background: #d4edda; border-radius: 7px; padding: 10px; font-size: 14px; margin-top: 6px; }}
+  #cont-btn {{
+    background: #ff4b4b; color: white; border: none;
+    padding: 12px 28px; font-size: 15px; border-radius: 8px;
+    cursor: pointer; margin-top: 4px; display: none;
+  }}
+</style>
+<div id="yt-wrap">
+  <div id="yt-player"></div>
+  <div id="quiz-overlay">
+    <div id="seg-info"></div>
+    <div id="qs-container"></div>
+    <button id="cont-btn" onclick="continueVideo()">{continue_label}</button>
+  </div>
+</div>
+<script>
+var pauseData = {pause_data_json};
+var pIdx = 0;
+var player;
+var timer = null;
+
+(function() {{
+  var s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api';
+  document.head.appendChild(s);
+}})();
+
+function onYouTubeIframeAPIReady() {{
+  player = new YT.Player('yt-player', {{
+    height: '360', width: '100%', videoId: '{video_id}',
+    playerVars: {{ playsinline: 1, rel: 0 }},
+    events: {{ onReady: function() {{ startTimer(); }} }}
+  }});
+}}
+
+function startTimer() {{
+  if (timer) clearInterval(timer);
+  timer = setInterval(function() {{
+    if (pIdx >= pauseData.length) {{ clearInterval(timer); return; }}
+    var cur = player.getCurrentTime ? player.getCurrentTime() : 0;
+    if (cur >= pauseData[pIdx].end_sec) {{
+      player.pauseVideo();
+      clearInterval(timer);
+      showQuiz(pauseData[pIdx]);
+    }}
+  }}, 500);
+}}
+
+function showQuiz(pd) {{
+  var overlay = document.getElementById('quiz-overlay');
+  var info = document.getElementById('seg-info');
+  var container = document.getElementById('qs-container');
+  var contBtn = document.getElementById('cont-btn');
+
+  info.textContent = '{segment_label} ' + pd.segment_id + (pd.summary ? ' — ' + pd.summary : '');
+  container.innerHTML = '';
+  contBtn.style.display = 'none';
+
+  var total = pd.questions.length;
+  var answered = 0;
+
+  function checkDone() {{
+    if (answered >= total || total === 0) contBtn.style.display = 'inline-block';
+  }}
+
+  pd.questions.forEach(function(q, qi) {{
+    var card = document.createElement('div');
+    card.className = 'q-card';
+    var qtxt = document.createElement('div');
+    qtxt.className = 'q-text';
+    qtxt.textContent = (qi + 1) + '. ' + q.question;
+    card.appendChild(qtxt);
+
+    if (q.options && q.options.length > 0) {{
+      var btns = [];
+      q.options.forEach(function(opt, oi) {{
+        var btn = document.createElement('button');
+        btn.className = 'opt-btn';
+        btn.textContent = opt;
+        btn.onclick = function() {{
+          if (btn.getAttribute('disabled')) return;
+          btns.forEach(function(b) {{ b.setAttribute('disabled', '1'); }});
+          if (oi === q.answer_index) {{
+            btn.classList.add('correct');
+          }} else {{
+            btn.classList.add('incorrect');
+            if (btns[q.answer_index]) btns[q.answer_index].classList.add('show-correct');
+          }}
+          answered++;
+          checkDone();
+        }};
+        btns.push(btn);
+        card.appendChild(btn);
+      }});
+    }} else {{
+      var ans = document.createElement('div');
+      ans.className = 'open-ans';
+      ans.textContent = '✅ ' + (q.answer || '');
+      card.appendChild(ans);
+      answered++;
+    }}
+    container.appendChild(card);
+  }});
+
+  checkDone();
+  overlay.classList.add('visible');
+}}
+
+function continueVideo() {{
+  pIdx++;
+  document.getElementById('quiz-overlay').classList.remove('visible');
+  startTimer();
+  player.playVideo();
+}}
+</script>
+'''
+
+
+def _show_material_viewer(mat):
+    """Show material title, description and YouTube viewing options for quiz-takers."""
+    from views.materials import MATERIAL_ICONS
+    from helpers import _extract_youtube_id
+
+    mat_id = mat["id"]
+    url = mat.get("url", "")
+    title = mat.get("title") or t("no_title")
+    icon = MATERIAL_ICONS.get(mat.get("material_type", ""), "📎")
+    is_youtube = mat.get("material_type") == "youtube_video"
+    video_id = _extract_youtube_id(url) if is_youtube else None
+
+    st.markdown(f"**{icon} {title}**")
+    if mat.get("description"):
+        st.caption(mat["description"])
+
+    if not video_id:
+        if url:
+            st.link_button("🔗", url, help=t("mat_open_youtube_btn"))
+        return
+
+    view_key = f"mat_view_{mat_id}"
+    has_segments = bool(mat.get("segments_json"))
+
+    col_yt, col_app, col_quiz, col_rest = st.columns([1, 1, 1, 6])
+    with col_yt:
+        st.link_button("🔗", url, help=t("mat_open_youtube_btn"))
+    with col_app:
+        active = st.session_state.get(view_key) == "simple"
+        if st.button("👁", key=f"mat_watch_{mat_id}",
+                     type="primary" if active else "secondary",
+                     help=t("mat_watch_in_app_btn")):
+            st.session_state[view_key] = None if active else "simple"
+            st.rerun()
+    with col_quiz:
+        active_q = st.session_state.get(view_key) == "questions"
+        if st.button("🧠", key=f"mat_watch_q_{mat_id}",
+                     type="primary" if active_q else "secondary",
+                     disabled=not has_segments,
+                     help=t("mat_watch_with_questions_btn") if has_segments else t("mat_no_segments_hint")):
+            st.session_state[view_key] = None if active_q else "questions"
+            st.rerun()
+
+    current_view = st.session_state.get(view_key)
+    if current_view == "simple":
+        st.components.v1.html(
+            f'<iframe width="100%" height="360" src="https://www.youtube.com/embed/{video_id}"'
+            f' frameborder="0" allowfullscreen></iframe>',
+            height=370,
+        )
+    elif current_view == "questions":
+        html = _build_youtube_quiz_html(mat)
+        if html:
+            st.components.v1.html(html, height=520, scrolling=True)
 
 
 def show_test_config():
@@ -51,7 +378,9 @@ def show_test_config():
             return
 
     questions = get_test_questions(test_id)
-    tags = get_test_tags(test_id)
+    mat_questions = get_test_material_questions(test_id)
+    questions = questions + mat_questions  # combined pool
+    tags = sorted({q["tag"] for q in questions} | set(get_test_tags(test_id)))
 
     st.header(test["title"])
     if test.get("description"):
@@ -65,89 +394,23 @@ def show_test_config():
         st.caption("  ·  ".join(caption_parts))
 
     # Show materials if any (but not for 'restricted' visibility unless user has explicit access)
-    materials = get_test_materials(test_id)
+    materials = get_materials_for_test(test_id)
     show_materials = True
-    # Check both test visibility and program visibility (if coming from a program)
     program_visibility = st.session_state.get("test_program_visibility", "public")
     effective_visibility = get_effective_visibility(visibility, program_visibility)
     if effective_visibility == "restricted":
-        # For restricted visibility, show materials to users with explicit access (any role)
         logged_in_uid = st.session_state.get("user_id")
         user_role = get_user_role_for_test(test_id, logged_in_uid) if logged_in_uid else None
         is_owner = logged_in_uid and test["owner_id"] == logged_in_uid
-        # Show materials if user has any explicit access (owner, global admin, or any collaboration role)
         can_see_materials = _is_global_admin() or is_owner or user_role is not None
         show_materials = can_see_materials
-    # For private/hidden visibility, user already has explicit access if they can see the test
     if materials and show_materials:
+        from views.materials import MATERIAL_ICONS
+        from helpers import _extract_youtube_id
         with st.expander(t("reference_materials", n=len(materials)), expanded=True):
             for mat in materials:
-                type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
-                icon = type_icons.get(mat["material_type"], "📎")
-                label = mat["title"] or mat["url"] or t("no_title")
-                has_download = mat["material_type"] in ("pdf", "image") and mat.get("file_data")
-                has_link = mat["material_type"] in ("url", "youtube") and mat.get("url")
-                has_extra = has_download or has_link
-                num_icons = 2 + (1 if has_extra else 0)
-                cols = st.columns([6] + [1] * num_icons)
-                with cols[0]:
-                    st.write(f"{icon} {label}")
-                col_idx = 1
-                if has_download:
-                    with cols[col_idx]:
-                        ext = "pdf" if mat["material_type"] == "pdf" else "png"
-                        st.download_button(
-                            "⬇️", data=mat["file_data"],
-                            file_name=f"{label}.{ext}",
-                            key=f"dl_mat_{mat['id']}",
-                            help=t("tooltip_download"),
-                        )
-                    col_idx += 1
-                elif has_link:
-                    with cols[col_idx]:
-                        st.markdown(f'<a href="{mat["url"]}" target="_blank" style="text-decoration:none;font-size:1.4em;" title="{t("tooltip_open_link")}">🔗</a>', unsafe_allow_html=True)
-                    col_idx += 1
-                with cols[col_idx]:
-                    if st.button("👁️", key=f"view_mat_{mat['id']}", help=t("tooltip_view_material")):
-                        for k in list(st.session_state.keys()):
-                            if k.startswith("show_mat_"):
-                                del st.session_state[k]
-                        st.session_state.pop("study_mat_id", None)
-                        st.session_state[f"show_mat_{mat['id']}"] = True
-                        st.rerun()
-                with cols[col_idx + 1]:
-                    is_youtube = mat["material_type"] == "youtube" and mat.get("url")
-                    can_study = is_youtube and bool(questions)
-                    if can_study:
-                        if st.button("🧠", key=f"study_mat_{mat['id']}", help=t("tooltip_study_with_questions")):
-                            for k in list(st.session_state.keys()):
-                                if k.startswith("show_mat_") or k.startswith("study_"):
-                                    del st.session_state[k]
-                            st.session_state.study_mat_id = mat['id']
-                            st.rerun()
-                    else:
-                        st.button("🧠", key=f"study_mat_{mat['id']}", disabled=True, help=t("tooltip_study_with_questions"))
-
-            # Render inline viewer for the active material (only one at a time)
-            for mat in materials:
-                if st.session_state.get(f"show_mat_{mat['id']}"):
-                    label = mat["title"] or mat["url"] or t("no_title")
-                    with st.container(border=True):
-                        _show_material_inline(mat, label)
-                    break
-
-            # Render study dialog if active
-            study_mat_id = st.session_state.get("study_mat_id")
-            if study_mat_id:
-                logged_uid = st.session_state.get("user_id")
-                _study_role = get_user_role_for_test(test_id, logged_uid) if logged_uid else None
-                _study_is_owner = logged_uid and test["owner_id"] == logged_uid
-                _study_is_reviewer = _is_global_admin() or _study_is_owner or _study_role in ("reviewer", "admin")
-                for mat in materials:
-                    if mat["id"] == study_mat_id:
-                        label = mat["title"] or mat["url"] or t("no_title")
-                        _show_study_dialog(mat, label, questions, is_reviewer=_study_is_reviewer)
-                        break
+                _show_material_viewer(mat)
+                st.divider()
 
     is_owner = _is_logged_in() and test["owner_id"] == st.session_state.user_id
     can_edit = _is_global_admin() or is_owner or (
@@ -173,7 +436,7 @@ def show_test_config():
         with cols_buttons[col_idx]:
             import json as _json
             # Build full export with materials and question-material links
-            all_q_db_ids = [q["db_id"] for q in questions]
+            all_q_db_ids = [q["db_id"] for q in questions if q.get("db_id") is not None]
             all_q_mat_links = get_question_material_links_bulk(all_q_db_ids) if all_q_db_ids else {}
             export_materials = []
             for mat in materials:
@@ -545,7 +808,7 @@ def show_quiz():
                     st.session_state.score += 1
                 else:
                     st.session_state.wrong_questions.append(question)
-                if _is_logged_in():
+                if _is_logged_in() and question.get("db_id") is not None:
                     record_answer(
                         st.session_state.user_id,
                         st.session_state.current_test_id,
@@ -564,7 +827,7 @@ def show_quiz():
                         st.session_state.score += 1
                     else:
                         st.session_state.wrong_questions.append(question)
-                    if _is_logged_in():
+                    if _is_logged_in() and question.get("db_id") is not None:
                         record_answer(
                             st.session_state.user_id,
                             st.session_state.current_test_id,
@@ -603,7 +866,8 @@ def show_quiz():
                 st.error(t("incorrect"))
 
         st.info(t("explanation", text=question['explanation']))
-        _render_material_refs(question["db_id"], st.session_state.current_test_id)
+        if question.get("db_id") is not None:
+            _render_material_refs(question["db_id"], st.session_state.current_test_id)
 
         if st.button(t("next_question"), type="primary"):
             st.session_state.current_index += 1

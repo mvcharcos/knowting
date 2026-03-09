@@ -11,17 +11,104 @@ from helpers import (
     LANGUAGE_OPTIONS, LANGUAGE_KEYS,
 )
 from db import (
-    get_test, get_test_questions, get_test_questions_by_ids, get_test_materials,
+    get_test, get_test_questions, get_test_questions_by_ids,
     get_test_tags, add_test_tag, rename_test_tag, delete_test_tag,
     create_test, update_test, delete_test,
     add_question, update_question, delete_question, get_next_question_num,
-    get_material_by_id, add_test_material, update_test_material, delete_test_material,
-    update_material_transcript, update_material_pause_times,
     get_question_material_links, get_question_material_links_bulk, set_question_material_links,
     add_collaborator, remove_collaborator, update_collaborator_role,
     get_collaborators, get_user_role_for_test, has_direct_test_access,
     get_effective_visibility,
+    get_materials_for_test, link_material_to_test, unlink_material_from_test, get_all_materials,
+    add_test_material, update_material_pause_times,
 )
+
+
+def _show_linked_materials(test_id, linked_materials):
+    from views.materials import MATERIAL_ICONS, VISIBILITY_ICONS
+    st.subheader(t("test_linked_materials"))
+
+    user_id = st.session_state.get("user_id")
+    linked_ids = {m["id"] for m in linked_materials}
+
+    if linked_materials:
+        for mat in linked_materials:
+            icon = MATERIAL_ICONS.get(mat.get("material_type", ""), "📎")
+            vis_icon = VISIBILITY_ICONS.get(mat.get("visibility", "public"), "🌐")
+            with st.container(border=True):
+                col_info, col_btn = st.columns([5, 1])
+                with col_info:
+                    st.markdown(f"**{icon} {mat.get('title') or t('no_title')}** {vis_icon}")
+                    if mat.get("description"):
+                        st.caption(mat["description"])
+                with col_btn:
+                    if st.button(t("test_unlink_material_btn"), key=f"unlink_mat_{mat['id']}", use_container_width=True):
+                        unlink_material_from_test(test_id, mat["id"])
+                        st.rerun()
+                # Show material graph if available
+                if mat.get("graph_json"):
+                    with st.expander(t("material_graph_expander"), expanded=False):
+                        from views.research import _display_concept_graph
+                        _display_concept_graph(mat["graph_json"], key_prefix=f"mat_{mat['id']}")
+                # Show material facts if available
+                if mat.get("facts_json"):
+                    with st.expander(t("material_facts_title"), expanded=False):
+                        from views.research import _display_grounded_graph
+                        _display_grounded_graph(mat["facts_json"])
+                # Show material segments if available
+                if mat.get("segments_json"):
+                    with st.expander(t("material_segments_title"), expanded=False):
+                        from views.research import _display_segments
+                        _display_segments(mat["segments_json"], grounded_data=mat.get("facts_json"),
+                                          questions=mat.get("questions_json") or [],
+                                          key_prefix=f"editor_mat_{mat['id']}")
+                # Show material questions if available
+                raw_qs = mat.get("questions_json") or []
+                qs = raw_qs if isinstance(raw_qs, list) else raw_qs.get("questions", [])
+                if qs:
+                    with st.expander(t("material_questions_expander", n=len(qs)), expanded=False):
+                        for i, q in enumerate(qs, 1):
+                            st.markdown(f"**{i}. {q.get('question', '')}**")
+                            options = q.get("options", [])
+                            if options:
+                                ans_idx = q.get("answer_index", 0)
+                                for j, opt in enumerate(options):
+                                    prefix = "✅" if j == ans_idx else "○"
+                                    st.caption(f"{prefix} {opt}")
+                            else:
+                                # Open-ended question: show text answer
+                                answer = q.get("answer", q.get("explanation", ""))
+                                if answer:
+                                    st.caption(f"✅ {answer}")
+                                evidence = q.get("evidence", "")
+                                if evidence:
+                                    st.caption(f"📄 _{evidence}_")
+                            if i < len(qs):
+                                st.divider()
+    else:
+        st.caption(t("test_no_linked_materials"))
+
+    # Link new material from library
+    all_mats = get_all_materials(user_id)
+    available = [m for m in all_mats if m["id"] not in linked_ids]
+    if available:
+        col_sel, col_btn = st.columns([4, 1])
+        with col_sel:
+            selected = st.selectbox(
+                t("test_select_material"),
+                options=available,
+                format_func=lambda m: f"{MATERIAL_ICONS.get(m.get('material_type', ''), '📎')} {m.get('title') or t('no_title')}",
+                key=f"link_mat_select_{test_id}",
+                label_visibility="collapsed",
+            )
+        with col_btn:
+            if st.button(t("test_link_material_btn"), key=f"link_mat_btn_{test_id}", type="primary", use_container_width=True):
+                if selected:
+                    link_material_to_test(test_id, selected["id"])
+                    st.rerun()
+    else:
+        if not all_mats:
+            st.caption(t("test_no_library_materials"))
 
 
 def _show_pause_time_editor_inline(material_id, youtube_url, current_pause_times):
@@ -805,6 +892,137 @@ def show_create_test():
             st.rerun()
 
 
+def _show_add_question_wizard(test_id, test, materials):
+    """Guided wizard: concept → fact → material → segment → create question."""
+    st.markdown(f"**{t('add_question')}**")
+
+    # --- Step 1: Concept ---
+    graph_nodes = (test.get("graph_json") or {}).get("nodes", [])
+    concept_ids = sorted({n["id"] for n in graph_nodes})
+
+    if concept_ids:
+        selected_concept = st.selectbox(
+            t("wizard_concept"), options=[""] + concept_ids,
+            format_func=lambda x: t("all_concepts") if x == "" else x,
+            key="wiz_concept",
+        )
+    else:
+        st.info(t("wizard_no_concepts"))
+        selected_concept = st.text_input(t("wizard_concept_custom"), key="wiz_concept_custom")
+
+    if not selected_concept:
+        col_create, col_cancel = st.columns(2)
+        with col_cancel:
+            if st.button(t("wizard_cancel"), key="wiz_cancel_early"):
+                st.session_state["_show_add_question_wizard"] = False
+                st.rerun()
+        return
+
+    # --- Step 2: Fact ---
+    all_facts = []
+    for mat in materials:
+        fj = mat.get("facts_json") or {}
+        for node in (fj.get("nodes") or []):
+            if node.get("kind") == "fact" and node.get("subject_concept") == selected_concept:
+                all_facts.append(node)
+
+    selected_fact = None
+    if all_facts:
+        fact_idx = st.selectbox(
+            t("wizard_fact"), options=range(len(all_facts)),
+            format_func=lambda i: all_facts[i]["text"],
+            key="wiz_fact",
+        )
+        selected_fact = all_facts[fact_idx]
+        evidence = selected_fact.get("evidence", "")
+        if evidence:
+            with st.expander(t("wizard_fact_evidence")):
+                st.caption(evidence)
+    else:
+        st.caption(t("wizard_no_facts"))
+
+    # --- Step 3: Material ---
+    concept_materials = [
+        m for m in materials
+        if any(n["id"] == selected_concept for n in (m.get("graph_json") or {}).get("nodes", []))
+    ]
+
+    selected_material_obj = None
+    if concept_materials:
+        type_icons = {"pdf": "📄", "youtube": "▶️", "youtube_video": "▶️", "image": "🖼️", "url": "🔗"}
+        mat_idx = st.selectbox(
+            t("wizard_material"), options=range(len(concept_materials)),
+            format_func=lambda i: f"{type_icons.get(concept_materials[i]['material_type'], '📎')} {concept_materials[i]['title'] or concept_materials[i].get('url', '') or t('no_title')}",
+            key="wiz_material",
+        )
+        selected_material_obj = concept_materials[mat_idx]
+    else:
+        st.caption(t("wizard_no_materials"))
+
+    # --- Step 4: Segment ---
+    selected_segment = None
+    if selected_material_obj:
+        segs_data = (selected_material_obj.get("segments_json") or {}).get("segments", [])
+        concept_segs = [s for s in segs_data if selected_concept in (s.get("concept_labels") or [])]
+
+        if concept_segs:
+            seg_idx = st.selectbox(
+                t("wizard_segment"), options=range(len(concept_segs)),
+                format_func=lambda i: f"{concept_segs[i]['segment_id']} ({concept_segs[i]['start_time']} → {concept_segs[i]['end_time']})",
+                key="wiz_segment",
+            )
+            selected_segment = concept_segs[seg_idx]
+
+            # Preview
+            with st.expander(t("wizard_segment_transcript")):
+                st.text_area("", value=selected_segment.get("clean_text", ""), disabled=True,
+                             key="wiz_seg_transcript", label_visibility="collapsed", height=150)
+            concepts_in_seg = selected_segment.get("concept_labels", [])
+            if concepts_in_seg:
+                st.caption(f"{t('wizard_segment_concepts')}: {', '.join(concepts_in_seg)}")
+            # Facts for this segment
+            seg_facts = []
+            fj = (selected_material_obj.get("facts_json") or {})
+            for node in (fj.get("nodes") or []):
+                if node.get("kind") == "fact" and node.get("subject_concept") in concepts_in_seg:
+                    seg_facts.append(node["text"])
+            if seg_facts:
+                with st.expander(t("wizard_fact")):
+                    for ft in seg_facts:
+                        st.markdown(f"- {ft}")
+        else:
+            st.caption(t("wizard_no_segments"))
+
+    # --- Action buttons ---
+    st.divider()
+    col_create, col_cancel = st.columns(2)
+    with col_create:
+        if st.button(t("wizard_create_question"), type="primary", key="wiz_create"):
+            concept = selected_concept
+            # Pre-fill explanation with fact + evidence as context hint
+            expl_parts = []
+            if selected_fact:
+                expl_parts.append(selected_fact.get("text", ""))
+                if selected_fact.get("evidence"):
+                    expl_parts.append(f'"{selected_fact["evidence"]}"')
+            if selected_segment:
+                expl_parts.append(f"[{selected_segment.get('start_time', '')} → {selected_segment.get('end_time', '')}]")
+            explanation_hint = " — ".join(p for p in expl_parts if p)
+            next_num = get_next_question_num(test_id)
+            db_id = add_question(
+                test_id, next_num, concept, t("new_question_text"),
+                [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, explanation_hint
+            )
+            if db_id:
+                st.session_state["_auto_expand_q"] = db_id
+            st.session_state["_show_add_question_wizard"] = False
+            st.rerun()
+    with col_cancel:
+        if st.button(t("wizard_cancel"), key="wiz_cancel"):
+            st.session_state["_show_add_question_wizard"] = False
+            st.rerun()
+
+
 def show_test_editor():
     """Show the test editor page for editing metadata and questions."""
     import json as _json_editor
@@ -936,12 +1154,8 @@ def show_test_editor():
 
     st.divider()
 
-    materials = get_test_materials(test_id)
-
-    # Show success message if time was just added (set by query param handler at top)
-    if "pause_time_added" in st.session_state:
-        st.success(st.session_state.pause_time_added)
-        del st.session_state.pause_time_added
+    linked_materials = get_materials_for_test(test_id)
+    materials = linked_materials  # alias for downstream code (question filters, import)
 
     # --- Collaborators ---
     if user_role in ("owner", "admin"):
@@ -997,452 +1211,19 @@ def show_test_editor():
 
     # --- Materials (owner and admin only) ---
     if user_role in ("owner", "admin"):
-        st.subheader(t("reference_materials_header"))
-
-        for mat in materials:
-            type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
-            icon = type_icons.get(mat["material_type"], "📎")
-            label = mat["title"] or mat["url"] or t("no_title")
-            with st.expander(f"{icon} {label}"):
-                new_title = st.text_input(t("material_title"), value=mat["title"] or "", key=f"edit_mat_title_{mat['id']}")
-                new_url = ""
-                if mat["material_type"] in ("youtube", "url"):
-                    new_url = st.text_input(t("url"), value=mat["url"] or "", key=f"edit_mat_url_{mat['id']}")
-                if mat["material_type"] == "image" and mat["file_data"]:
-                    st.image(mat["file_data"], width=200)
-                elif mat["material_type"] == "pdf" and mat["file_data"]:
-                    st.download_button(
-                        t("download"),
-                        data=mat["file_data"],
-                        file_name=f"{label}.pdf",
-                        key=f"dl_mat_{mat['id']}",
-                    )
-                is_yt = mat["material_type"] == "youtube"
-                cols = st.columns([1, 1, 1, 1, 1, 1] if is_yt else [1, 1, 1])
-                with cols[0]:
-                    if st.button(t("save_material"), key=f"save_mat_{mat['id']}", type="primary"):
-                        update_test_material(mat["id"], new_title.strip(), new_url.strip())
-                        st.rerun()
-                with cols[1]:
-                    gen_q_key = f"_show_gen_questions_{mat['id']}"
-                    if st.button(t("generate"), key=f"gen_mat_{mat['id']}"):
-                        if is_yt:
-                            transcript_text = mat.get("transcript", "")
-                            if not transcript_text:
-                                transcript_text = _fetch_youtube_transcript(mat["url"])
-                                if transcript_text:
-                                    update_material_transcript(mat["id"], transcript_text)
-                            if transcript_text:
-                                st.session_state[gen_q_key] = not st.session_state.get(gen_q_key, False)
-                                st.rerun()
-                            else:
-                                st.warning(t("no_transcript"))
-                        else:
-                            # For other materials, create placeholder questions
-                            next_num = get_next_question_num(test_id)
-                            mat_label = mat["title"] or t("no_title")
-                            for i in range(3):
-                                add_question(
-                                    test_id, next_num + i, "general",
-                                    t("generated_question", name=mat_label, n=i+1),
-                                    [t("option_a"), t("option_b"), t("option_c"), t("option_d")],
-                                    0, t("generated_explanation"),
-                                    source=f"material:{mat['id']}",
-                                )
-                            st.rerun()
-                if is_yt:
-                    with cols[2]:
-                        if st.button(f"📜 {t('transcript')}", key=f"transcript_mat_{mat['id']}"):
-                            transcript_text = mat.get("transcript", "")
-                            if not transcript_text:
-                                transcript_text = _fetch_youtube_transcript(mat["url"])
-                                if transcript_text:
-                                    update_material_transcript(mat["id"], transcript_text)
-                            if transcript_text:
-                                _show_transcript_dialog(transcript_text)
-                            else:
-                                st.warning(t("no_transcript"))
-                    with cols[3]:
-                        gen_topics_key = f"_show_gen_topics_{mat['id']}"
-                        if st.button(f"🏷️ {t('generate_topics_btn')}", key=f"gen_topics_mat_{mat['id']}"):
-                            transcript_text = mat.get("transcript", "")
-                            if not transcript_text:
-                                transcript_text = _fetch_youtube_transcript(mat["url"])
-                                if transcript_text:
-                                    update_material_transcript(mat["id"], transcript_text)
-                            if transcript_text:
-                                st.session_state[gen_topics_key] = not st.session_state.get(gen_topics_key, False)
-                                st.rerun()
-                            else:
-                                st.warning(t("no_transcript"))
-                    with cols[4]:
-                        editor_key = f"_show_pause_editor_{mat['id']}"
-                        if st.button("⏱️", key=f"pause_times_mat_{mat['id']}", help=t("pause_time_selector_title")):
-                            st.session_state[editor_key] = not st.session_state.get(editor_key, False)
-                            st.rerun()
-                with cols[-1]:
-                    if st.button("🗑️", key=f"del_mat_{mat['id']}"):
-                        delete_test_material(mat["id"])
-                        st.rerun()
-
-                # Show inline pause time editor when toggled
-                if st.session_state.get(f"_show_pause_editor_{mat['id']}", False):
-                    with st.container(border=True):
-                        _show_pause_time_editor_inline(mat["id"], mat["url"], mat.get("pause_times", ""))
-
-                # Show inline generate topics editor when toggled
-                if st.session_state.get(f"_show_gen_topics_{mat['id']}", False):
-                    transcript_text = mat.get("transcript", "")
-                    if transcript_text:
-                        existing_tags = get_test_tags(test_id)
-                        with st.container(border=True):
-                            _show_generate_topics_inline(test_id, transcript_text, existing_tags, mat["id"])
-
-                # Show inline generate questions editor when toggled
-                if st.session_state.get(f"_show_gen_questions_{mat['id']}", False):
-                    transcript_text = mat.get("transcript", "")
-                    if transcript_text:
-                        with st.container(border=True):
-                            _show_generate_questions_inline(test_id, mat["id"], transcript_text)
-
-        st.write(t("add_material_label"))
-        mat_type = st.selectbox(t("material_type"), ["pdf", "youtube", "image", "url"],
-                                format_func=lambda x: {"pdf": t("pdf"), "youtube": t("youtube"), "image": t("image"), "url": t("url_type")}[x],
-                                key="new_mat_type")
-        mat_title = st.text_input(t("material_title"), key="new_mat_title")
-
-        mat_url = ""
-        mat_file = None
-        mat_pause_times = ""
-        if mat_type in ("youtube", "url"):
-            col_url, col_pause_btn = st.columns([4, 1]) if mat_type == "youtube" else (st.columns([1]),)
-            with col_url if mat_type == "youtube" else st.container():
-                mat_url = st.text_input(t("url"), key="new_mat_url")
-            if mat_type == "youtube":
-                with col_pause_btn:
-                    st.write("")  # Spacing to align with input
-                    # Show pause times button only if URL is entered
-                    if mat_url.strip() and _extract_youtube_id(mat_url.strip()):
-                        if st.button(t("set_pause_times"), key="new_mat_pause_btn"):
-                            st.session_state["_show_new_mat_pause_editor"] = not st.session_state.get("_show_new_mat_pause_editor", False)
-                            st.rerun()
-                # Show inline pause time editor when toggled
-                if st.session_state.get("_show_new_mat_pause_editor", False) and mat_url.strip():
-                    with st.container(border=True):
-                        _show_new_material_pause_time_inline(mat_url.strip())
-                # Get pause times from session state if set via editor
-                if "new_material_pause_times" in st.session_state:
-                    stored_pause_times = st.session_state.new_material_pause_times
-                    if stored_pause_times:
-                        st.info(f"⏱️ {len(stored_pause_times)} {t('marked_pause_times').lower()}")
-                # Also allow manual entry
-                mat_pause_times = st.text_input(t("pause_times_label"), key="new_mat_pause_times", help=t("pause_times_help"))
-        else:
-            file_types = ["pdf"] if mat_type == "pdf" else ["png", "jpg", "jpeg", "gif"]
-            mat_file = st.file_uploader(t("file"), type=file_types, key="new_mat_file")
-
-        if st.button(t("add_material_btn"), type="secondary"):
-            file_data = mat_file.read() if mat_file else None
-            if mat_type in ("youtube", "url") and not mat_url.strip():
-                st.warning(t("url_required"))
-            elif mat_type in ("pdf", "image") and not file_data:
-                st.warning(t("file_required"))
-            else:
-                # Use pause times from dialog if available, otherwise parse text input
-                if mat_type == "youtube" and "new_material_pause_times" in st.session_state and st.session_state.new_material_pause_times:
-                    import json as _json
-                    pause_json = _json.dumps(st.session_state.new_material_pause_times)
-                    del st.session_state.new_material_pause_times
-                else:
-                    pause_json = _parse_pause_times(mat_pause_times) if mat_type == "youtube" else ""
-                transcript = ""
-                if mat_type == "youtube" and mat_url.strip():
-                    transcript = _fetch_youtube_transcript(mat_url.strip())
-                add_test_material(test_id, mat_type, mat_title.strip(), mat_url.strip(), file_data,
-                                  pause_times=pause_json, transcript=transcript)
-                st.rerun()
-
+        _show_linked_materials(test_id, linked_materials)
         st.divider()
 
-    # --- Topics (owner and admin only) ---
+    # --- Knowledge Graph (owner and admin only) ---
     if user_role in ("owner", "admin"):
-        st.subheader(t("topics"))
-
-        tags = get_test_tags(test_id)
-        tag_counts = {}
-        for q in questions:
-            tag_counts[q["tag"]] = tag_counts.get(q["tag"], 0) + 1
-
-        tag_edits = {}
-        for tag in tags:
-            count = tag_counts.get(tag, 0)
-            confirm_key = f"confirm_del_tag_{tag}"
-
-            if st.session_state.get(confirm_key):
-                st.warning(t("delete_topic_confirm", tag=tag, n=count))
-                col_del_q, col_blank, col_cancel = st.columns(3)
-                with col_del_q:
-                    if st.button(t("delete_questions_btn"), key=f"deltag_delq_{tag}"):
-                        delete_test_tag(test_id, tag, delete_questions=True)
-                        del st.session_state[confirm_key]
-                        st.rerun()
-                with col_blank:
-                    if st.button(t("leave_blank"), key=f"deltag_blank_{tag}"):
-                        delete_test_tag(test_id, tag, delete_questions=False)
-                        del st.session_state[confirm_key]
-                        st.rerun()
-                with col_cancel:
-                    if st.button(t("cancel"), key=f"deltag_cancel_{tag}"):
-                        del st.session_state[confirm_key]
-                        st.rerun()
-            else:
-                col_name, col_count, col_del = st.columns([3, 1, 0.5])
-                with col_name:
-                    new_name = st.text_input(t("topic_label"), value=tag, key=f"tag_name_{tag}", label_visibility="collapsed")
-                    tag_edits[tag] = new_name
-                with col_count:
-                    st.caption(t("n_questions_abbrev", n=count))
-                with col_del:
-                    if st.button("🗑️", key=f"del_tag_{tag}"):
-                        st.session_state[confirm_key] = True
-                        st.rerun()
-
-        if tag_edits:
-            if st.button(t("save_topic_changes")):
-                for old_tag, new_tag in tag_edits.items():
-                    if new_tag.strip() != old_tag and new_tag.strip():
-                        rename_test_tag(test_id, old_tag, new_tag.strip())
-                st.rerun()
-
-        st.write(t("add_topic_label"))
-        col_new_tag, col_add_tag = st.columns([3, 1])
-        with col_new_tag:
-            new_tag_name = st.text_input(t("topic_label"), key="new_tag_name", label_visibility="collapsed", placeholder=t("topic_name_placeholder"))
-        with col_add_tag:
-            if st.button(t("add_btn")):
-                if new_tag_name and new_tag_name.strip():
-                    add_test_tag(test_id, new_tag_name.strip())
-                    st.rerun()
-
+        st.subheader(t("test_knowledge_graph"))
+        if test.get("graph_json"):
+            from views.research import _display_concept_graph
+            _display_concept_graph(test["graph_json"], key_prefix=f"test_{test_id}")
+        else:
+            st.caption(t("test_no_graph"))
         st.divider()
 
-    # --- Warnings: segments lacking questions ---
-    import json as _json_warn
-    _seg_warnings = []
-    q_db_ids_warn = [q["db_id"] for q in questions]
-    all_q_mat_links_warn = get_question_material_links_bulk(q_db_ids_warn) if q_db_ids_warn else {}
-    # Build reverse map: material_id -> list of (db_id, timestamp_secs)
-    _mat_q_times = {}
-    # Also build set of db_ids already linked to each material
-    _mat_linked_dbids = {}
-    for db_id, links in all_q_mat_links_warn.items():
-        for lk in links:
-            mid = lk["material_id"]
-            ctx = lk.get("context", "").strip()
-            _mat_linked_dbids.setdefault(mid, set()).add(db_id)
-            if ctx:
-                _mat_q_times.setdefault(mid, []).append((db_id, _time_to_secs(ctx)))
-
-    for mat in materials:
-        if mat.get("material_type") != "youtube":
-            continue
-        pause_json = mat.get("pause_times", "")
-        if not pause_json:
-            continue
-        try:
-            stops = _json_warn.loads(pause_json)
-        except (ValueError, TypeError):
-            continue
-        if not stops:
-            continue
-        # Handle old format
-        if isinstance(stops[0], (int, float)):
-            stops = [{"t": s, "n": 1} for s in stops]
-        stops.sort(key=lambda x: x["t"])
-
-        mat_label = mat.get("title") or mat.get("url") or "?"
-        q_times = _mat_q_times.get(mat["id"], [])
-        prev_t = 0
-        for si, stop in enumerate(stops):
-            stop_t = stop["t"]
-            needed = stop.get("n", 1)
-            available_count = sum(1 for _, qt in q_times if prev_t <= qt < stop_t)
-            if available_count < needed:
-                _seg_warnings.append({
-                    "material": mat_label,
-                    "mat_id": mat["id"],
-                    "start": _seconds_to_mmss(prev_t),
-                    "end": _seconds_to_mmss(stop_t),
-                    "start_secs": prev_t,
-                    "end_secs": stop_t,
-                    "needed": needed,
-                    "available": available_count,
-                    "stop_idx": si,
-                    "stops": stops,
-                    "transcript": mat.get("transcript", ""),
-                })
-            prev_t = stop_t
-
-    if _seg_warnings and not read_only:
-        with st.expander(f"⚠️ {t('warnings')} ({len(_seg_warnings)})", expanded=True):
-            for wi, w in enumerate(_seg_warnings):
-                wkey = f"warn_{w['mat_id']}_{w['stop_idx']}"
-                st.warning(t("segment_missing_questions",
-                             material=w["material"], start=w["start"], end=w["end"],
-                             needed=w["needed"], available=w["available"]))
-                btn_cols = st.columns([1, 1, 1, 1])
-                # Button 1: Reduce pause count
-                with btn_cols[0]:
-                    if st.button("📉", key=f"{wkey}_reduce", help=t("reduce_pause_count", n=w["available"])):
-                        new_stops = list(w["stops"])
-                        new_stops[w["stop_idx"]]["n"] = max(w["available"], 1) if w["available"] > 0 else 0
-                        # If reducing to 0, remove the stop entirely
-                        if new_stops[w["stop_idx"]]["n"] == 0:
-                            new_stops.pop(w["stop_idx"])
-                        update_material_pause_times(w["mat_id"], _json_warn.dumps(new_stops))
-                        st.success(t("pause_count_updated"))
-                        st.rerun()
-                # Button 2: Link existing questions
-                with btn_cols[1]:
-                    link_key = f"{wkey}_link_open"
-                    if st.button("🔗", key=f"{wkey}_link", help=t("link_existing_questions")):
-                        st.session_state[link_key] = not st.session_state.get(link_key, False)
-                        st.rerun()
-                # Button 3: Create new question
-                with btn_cols[2]:
-                    create_key = f"{wkey}_create_open"
-                    if st.button("➕", key=f"{wkey}_create", help=t("create_question_for_segment")):
-                        st.session_state[create_key] = not st.session_state.get(create_key, False)
-                        st.rerun()
-                # Button 4: Show transcript for segment
-                with btn_cols[3]:
-                    transcript_key = f"{wkey}_transcript_open"
-                    if st.button("📜", key=f"{wkey}_transcript", help=t("transcript")):
-                        st.session_state[transcript_key] = not st.session_state.get(transcript_key, False)
-                        st.rerun()
-
-                # Inline: transcript for segment
-                transcript_key = f"{wkey}_transcript_open"
-                if st.session_state.get(transcript_key):
-                    with st.container(border=True):
-                        seg_text = _extract_segment_transcript(w.get("transcript", ""), w["start_secs"], w["end_secs"])
-                        if seg_text:
-                            st.text_area(
-                                f"{t('transcript')} ({w['start']} → {w['end']})",
-                                value=seg_text, height=200, disabled=True,
-                                key=f"{wkey}_transcript_area",
-                            )
-                        else:
-                            st.info(t("no_transcript"))
-
-                # Inline: link existing questions
-                link_key = f"{wkey}_link_open"
-                if st.session_state.get(link_key):
-                    with st.container(border=True):
-                        st.write(t("select_questions_to_link", start=w["start"], end=w["end"]))
-                        # Show unlinked questions for this material/segment
-                        linked_to_mat = _mat_linked_dbids.get(w["mat_id"], set())
-                        unlinked_qs = [q for q in questions if q["db_id"] not in linked_to_mat]
-                        if not unlinked_qs:
-                            st.info(t("no_matching_questions"))
-                        else:
-                            # Use AI to find related questions (cached in session state)
-                            ai_key = f"{wkey}_ai_related"
-                            if ai_key not in st.session_state:
-                                seg_text = _extract_segment_transcript(w.get("transcript", ""), w["start_secs"], w["end_secs"])
-                                if seg_text:
-                                    with st.spinner(t("analyzing_questions")):
-                                        st.session_state[ai_key] = _find_related_questions(seg_text, unlinked_qs)
-                                else:
-                                    st.session_state[ai_key] = []
-                            ai_related = st.session_state.get(ai_key, [])
-                            ai_related_set = set(ai_related)
-
-                            # Sort: AI-suggested first (in relevance order), then the rest
-                            if ai_related:
-                                ai_order = {db_id: i for i, db_id in enumerate(ai_related)}
-                                sorted_qs = sorted(unlinked_qs, key=lambda q: ai_order.get(q["db_id"], len(ai_related) + q["id"]))
-                            else:
-                                sorted_qs = unlinked_qs
-
-                            sel_key = f"{wkey}_link_sel"
-                            if sel_key not in st.session_state:
-                                # Pre-select AI-suggested questions
-                                st.session_state[sel_key] = set(ai_related)
-                            for q in sorted_qs:
-                                is_sel = q["db_id"] in st.session_state[sel_key]
-                                label = f"#{q['id']} — {q['question'][:80]}"
-                                if q["db_id"] in ai_related_set:
-                                    label = f"#{q['id']} — {t('ai_suggested')} — {q['question'][:70]}"
-                                if st.checkbox(label, value=is_sel, key=f"{wkey}_lq_{q['db_id']}"):
-                                    st.session_state[sel_key].add(q["db_id"])
-                                else:
-                                    st.session_state[sel_key].discard(q["db_id"])
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                selected_ids = st.session_state.get(sel_key, set())
-                                if st.button(t("link_selected"), key=f"{wkey}_link_confirm", type="primary", disabled=len(selected_ids) == 0):
-                                    # Compute a timestamp in the middle of the segment for the context
-                                    mid_secs = (w["start_secs"] + w["end_secs"]) // 2
-                                    ctx_str = _seconds_to_mmss(mid_secs)
-                                    for db_id in selected_ids:
-                                        existing = get_question_material_links(db_id)
-                                        existing.append({"material_id": w["mat_id"], "context": ctx_str})
-                                        set_question_material_links(db_id, existing)
-                                    st.session_state.pop(sel_key, None)
-                                    st.session_state.pop(ai_key, None)
-                                    st.session_state.pop(link_key, None)
-                                    st.success(t("questions_linked", n=len(selected_ids)))
-                                    st.rerun()
-                            with c2:
-                                if st.button(t("cancel"), key=f"{wkey}_link_cancel"):
-                                    st.session_state.pop(sel_key, None)
-                                    st.session_state.pop(ai_key, None)
-                                    st.session_state.pop(link_key, None)
-                                    st.rerun()
-
-                # Inline: create new question for segment
-                create_key = f"{wkey}_create_open"
-                if st.session_state.get(create_key):
-                    with st.container(border=True):
-                        all_tags_warn = get_test_tags(test_id)
-                        tag_opts = all_tags_warn if all_tags_warn else ["general"]
-                        new_q_tag = st.selectbox(t("topic_label"), options=tag_opts, key=f"{wkey}_new_tag")
-                        new_q_text = st.text_area(t("question_label"), key=f"{wkey}_new_text")
-                        new_q_opts = []
-                        for oi in range(4):
-                            new_q_opts.append(st.text_input(t("option_n", n=oi + 1), key=f"{wkey}_new_opt_{oi}"))
-                        new_q_ans = st.selectbox(
-                            t("correct_answer_select"), range(4),
-                            format_func=lambda i: new_q_opts[i] if new_q_opts[i] else f"{i + 1}",
-                            key=f"{wkey}_new_ans",
-                        )
-                        new_q_expl = st.text_area(t("explanation_label"), key=f"{wkey}_new_expl")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            if st.button(t("save_question"), key=f"{wkey}_create_save", type="primary"):
-                                if new_q_text.strip():
-                                    next_num = get_next_question_num(test_id)
-                                    mid_secs = (w["start_secs"] + w["end_secs"]) // 2
-                                    ctx_str = _seconds_to_mmss(mid_secs)
-                                    opts = [o for o in new_q_opts if o.strip()]
-                                    if len(opts) < 2:
-                                        opts = [t("option_a"), t("option_b")]
-                                    q_id = add_question(test_id, next_num, new_q_tag, new_q_text.strip(), opts, min(new_q_ans, len(opts) - 1), new_q_expl.strip())
-                                    set_question_material_links(q_id, [{"material_id": w["mat_id"], "context": ctx_str}])
-                                    st.session_state.pop(create_key, None)
-                                    st.success(t("question_created_for_segment"))
-                                    st.rerun()
-                        with c2:
-                            if st.button(t("cancel"), key=f"{wkey}_create_cancel"):
-                                st.session_state.pop(create_key, None)
-                                st.rerun()
-    elif _seg_warnings and read_only:
-        with st.expander(f"⚠️ {t('warnings')} ({len(_seg_warnings)})", expanded=True):
-            for w in _seg_warnings:
-                st.warning(t("segment_missing_questions",
-                             material=w["material"], start=w["start"], end=w["end"],
-                             needed=w["needed"], available=w["available"]))
 
     # --- Questions ---
     all_tags = get_test_tags(test_id)
@@ -1456,13 +1237,13 @@ def show_test_editor():
             col_add_q, col_import_q, col_bulk_q = st.columns([1, 1, 1])
             with col_add_q:
                 if st.button(t("add_question"), width="stretch"):
-                    next_num = get_next_question_num(test_id)
-                    default_tag = all_tags[0] if all_tags else "general"
-                    add_question(test_id, next_num, default_tag, t("new_question_text"), [t("option_a"), t("option_b"), t("option_c"), t("option_d")], 0, "")
+                    st.session_state["_show_add_question_wizard"] = not st.session_state.get("_show_add_question_wizard", False)
+                    st.session_state.pop("_show_import_questions", None)
                     st.rerun()
             with col_import_q:
                 if st.button(t("import_questions"), width="stretch"):
                     st.session_state["_show_import_questions"] = not st.session_state.get("_show_import_questions", False)
+                    st.session_state.pop("_show_add_question_wizard", None)
                     st.rerun()
             with col_bulk_q:
                 q_bulk_delete = st.toggle(t("bulk_delete_mode"), key="q_bulk_delete_mode")
@@ -1470,8 +1251,11 @@ def show_test_editor():
                     if "bulk_delete_questions" not in st.session_state:
                         st.session_state.bulk_delete_questions = set()
 
-            # Show inline import questions form when toggled
-            if st.session_state.get("_show_import_questions", False):
+            # Show wizard or import form (mutually exclusive)
+            if st.session_state.get("_show_add_question_wizard", False):
+                with st.container(border=True):
+                    _show_add_question_wizard(test_id, test, materials)
+            elif st.session_state.get("_show_import_questions", False):
                 with st.container(border=True):
                     _show_import_questions_inline(test_id, materials)
         else:
@@ -1487,15 +1271,17 @@ def show_test_editor():
             q_search = st.text_input(t("search_keywords"), key="q_filter_search", placeholder=t("search_placeholder"))
             col_topic, col_mat, col_from, col_to = st.columns([2, 2, 1, 1])
             with col_topic:
-                topic_options = [""] + list(all_tags)
+                graph_nodes = (test.get("graph_json") or {}).get("nodes", [])
+                concept_ids = sorted({n["id"] for n in graph_nodes})
+                concept_filter_options = concept_ids or list(all_tags)
                 q_filter_topic = st.selectbox(
-                    t("filter_by_topic"), options=topic_options,
-                    format_func=lambda x: t("all_topics") if x == "" else x,
+                    t("filter_by_concept"), options=[""] + concept_filter_options,
+                    format_func=lambda x: t("all_concepts") if x == "" else x,
                     key="q_filter_topic",
                 )
             with col_mat:
                 mat_options = [0] + [m["id"] for m in materials]
-                type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
+                type_icons = {"pdf": "📄", "youtube": "▶️", "youtube_video": "▶️", "image": "🖼️", "url": "🔗"}
                 mat_labels = {0: t("all_materials")}
                 mat_by_id_local = {}
                 for m in materials:
@@ -1684,7 +1470,10 @@ def show_test_editor():
                 expander_parent = exp_col
             else:
                 expander_parent = st
-            with expander_parent.expander(f"#{q['id']} — {q['question'][:80]}"):
+            auto_expand = st.session_state.get("_auto_expand_q") == q["db_id"]
+            if auto_expand:
+                del st.session_state["_auto_expand_q"]
+            with expander_parent.expander(f"#{q['id']} — {q['question'][:80]}", expanded=auto_expand):
                 q_key = f"q_{q['db_id']}"
                 source = q.get("source", "manual")
                 if source == "manual":
@@ -1696,14 +1485,16 @@ def show_test_editor():
                 else:
                     source_label = source
                 st.caption(t("source", name=source_label))
-                # Build tag options for selectbox
-                tag_options = list(all_tags)
+                # Build concept options for selectbox (prefer graph nodes, fall back to tags)
+                q_graph_nodes = (test.get("graph_json") or {}).get("nodes", [])
+                q_concept_ids = [n["id"] for n in q_graph_nodes]
+                tag_options = list(dict.fromkeys(q_concept_ids + list(all_tags)))
                 if q["tag"] and q["tag"] not in tag_options:
                     tag_options.append(q["tag"])
                 if not tag_options:
                     tag_options = [""]
                 current_idx = tag_options.index(q["tag"]) if q["tag"] in tag_options else 0
-                q_tag = st.selectbox(t("topic_label"), options=tag_options, index=current_idx, key=f"{q_key}_tag", disabled=read_only)
+                q_tag = st.selectbox(t("concept_label"), options=tag_options, index=current_idx, key=f"{q_key}_tag", disabled=read_only)
                 q_text = st.text_area(t("question_label"), value=q["question"], key=f"{q_key}_text", disabled=read_only)
                 q_explanation = st.text_area(t("explanation_label"), value=q.get("explanation", ""), key=f"{q_key}_expl", disabled=read_only)
 
@@ -1753,13 +1544,13 @@ def show_test_editor():
                     q_mat_links = {}
                     for mat in materials:
                         mid = mat["id"]
-                        type_icons = {"pdf": "📄", "youtube": "▶️", "image": "🖼️", "url": "🔗"}
+                        type_icons = {"pdf": "📄", "youtube": "▶️", "youtube_video": "▶️", "image": "🖼️", "url": "🔗"}
                         icon = type_icons.get(mat["material_type"], "📎")
                         mlabel = mat["title"] or mat["url"] or t("no_title")
                         is_linked = st.checkbox(f"{icon} {mlabel}", value=mid in existing_links, key=f"{q_key}_mat_{mid}")
                         if is_linked:
                             ctx = existing_links.get(mid, "")
-                            if mat["material_type"] == "youtube":
+                            if mat["material_type"] in ("youtube", "youtube_video"):
                                 ctx = st.text_input(t("timestamps_hint"), value=ctx, key=f"{q_key}_mat_ctx_{mid}")
                             elif mat["material_type"] == "pdf":
                                 ctx = st.text_input(t("pages_hint"), value=ctx, key=f"{q_key}_mat_ctx_{mid}")

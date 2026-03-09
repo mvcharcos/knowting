@@ -26,19 +26,27 @@ class _OpenRouterClient:
             self._api_key = api_key
 
         def create(self, model, messages, temperature=0.0, max_tokens=2000, **kwargs):
-            import requests
-            resp = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
-                timeout=120,
-            )
+            import requests, time
+            delay = 5
+            for attempt in range(5):
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+                    timeout=120,
+                )
+                if resp.status_code in (429, 500, 502, 503):
+                    wait = int(resp.headers.get("Retry-After", delay))
+                    time.sleep(wait)
+                    delay *= 2
+                    continue
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                return _OpenRouterClient._Resp(content)
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return _OpenRouterClient._Resp(content)
 
     class _Chat:
         def __init__(self, api_key):
@@ -108,6 +116,26 @@ def _make_llm_client(provider, api_key):
     return InferenceClient(token=api_key)
 
 
+def _get_latest_approach(video_id):
+    """Return the approach with the most recently saved graph for video_id, or None."""
+    try:
+        from db import _sb
+        res = (
+            _sb()
+            .table("concept_graphs")
+            .select("approach")
+            .eq("video_url", video_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return res.data[0]["approach"]
+    except Exception:
+        pass
+    return None
+
+
 def show_research():
     """Show the research page for testing concept graph generation from transcripts."""
     st.header(f"🔬 {t('research')}")
@@ -119,9 +147,17 @@ def show_research():
     st.subheader(t("research_concept_graph"))
     st.caption(t("research_concept_graph_desc"))
 
+    # On a fresh session, pre-select the most recently updated approach for the default URL
+    if "research_approach" not in st.session_state:
+        _default_vid = _extract_youtube_id(DEFAULT_VIDEO_URL) if DEFAULT_VIDEO_URL else None
+        if _default_vid:
+            _latest = _get_latest_approach(_default_vid)
+            if _latest:
+                st.session_state.research_approach = _latest
+
     approach = st.selectbox(
         t("research_approach"),
-        options=["llm", "nlp_v2", "nlp_v2_llm", "nlp", "ts", "prompt_seq"],
+        options=["prompt_seq", "llm", "nlp_v2", "nlp_v2_llm", "nlp", "ts"],
         format_func=lambda x: t(f"research_approach_{x}"),
         key="research_approach",
     )
@@ -140,7 +176,7 @@ def show_research():
     if approach in ("llm", "nlp_v2_llm", "prompt_seq"):
         provider = st.radio(
             t("research_provider"),
-            options=["huggingface", "openrouter", "gemini"],
+            options=["openrouter", "huggingface", "gemini"],
             format_func=lambda x: t(f"research_provider_{x}"),
             horizontal=True,
             key="research_provider",
@@ -271,6 +307,9 @@ def show_research():
                     st.session_state.research_saved_provider = provider
                     st.session_state.research_transcript_lang = _detect_transcript_lang(transcript)
                     st.session_state.research_transcript = transcript
+                    # Clear stale extras from the previous graph
+                    for _k in ("research_grounded_data", "research_questions", "research_segments_data"):
+                        st.session_state.pop(_k, None)
                     # Reset concept enable/disable state for the new graph
                     new_concept_ids = {
                         n["id"] for n in graph_data.get("nodes", [])
@@ -514,7 +553,7 @@ def _compute_segments(transcript, graph_data, api_key, model, provider):
         return None
 
 
-def _display_segments(segments_data, grounded_data=None, questions=None):
+def _display_segments(segments_data, grounded_data=None, questions=None, key_prefix="research"):
     """Display video segments with their concepts, facts, and questions."""
     import json
     from collections import defaultdict
@@ -550,7 +589,15 @@ def _display_segments(segments_data, grounded_data=None, questions=None):
         concept_details = seg.get("concept_details", [])
         concept_labels = seg.get("concept_labels", [])
 
-        expander_label = f"🕐 {start} → {end}  •  {duration}s  •  {len(concept_details)} {t('research_segment_concepts_covered')}  •  ⭐ {qw:.2f}"
+        seg_facts = [f for lbl in concept_labels for f in facts_by_concept.get(lbl, [])]
+        seg_questions = [q for lbl in concept_labels for q in questions_by_concept.get(lbl, [])]
+        expander_label = (
+            f"🕐 {start} → {end}  •  {duration}s"
+            f"  •  {len(concept_details)} {t('research_segment_concepts_covered')}"
+            f"  •  {len(seg_facts)} {t('research_facts_label')}"
+            f"  •  {len(seg_questions)} {t('research_segment_questions_title').lower()}"
+            f"  •  ⭐ {qw:.2f}"
+        )
         with st.expander(expander_label, expanded=False):
             if summary:
                 st.markdown(f"**{t('research_segment_summary')}:** {summary}")
@@ -588,7 +635,7 @@ def _display_segments(segments_data, grounded_data=None, questions=None):
         data=json.dumps(segments_data, ensure_ascii=False, indent=2),
         file_name="video_segments.json",
         mime="application/json",
-        key="research_download_segments_btn",
+        key=f"{key_prefix}_download_segments_btn",
     )
 
 
@@ -1287,24 +1334,30 @@ def _generate_questions(graph_data, transcript, num_questions, hf_token, hf_mode
         def _make_prompt(concept, qtype, difficulty, context, lang, facts):
             facts_block = "\n".join(f"- {f}" for f in facts) if facts else "- (none)"
             if lang == "es":
-                system = ("Eres un generador de preguntas de estudio. "
+                system = ("Eres un generador de preguntas de estudio tipo test. "
                           "Debes basarte ÚNICAMENTE en el CONTEXTO proporcionado. "
                           "Devuelve SOLO JSON válido.")
                 user = (f'CONCEPTO: "{concept}"\nTIPO: {qtype}\nDIFICULTAD: {difficulty}\n\n'
                         f'HECHOS RELACIONADOS:\n{facts_block}\n\n'
                         f'CONTEXTO:\n"""{context}"""\n\n'
-                        f'Genera UNA pregunta basada solo en el contexto. Devuelve SOLO JSON:\n'
-                        f'{{"question":"...","answer":"...","evidence":"...","concept":"{concept}",'
+                        f'Genera UNA pregunta de opción múltiple basada solo en el contexto. '
+                        f'Incluye 4 opciones (options), indica cuál es la correcta con answer_index (0-3), '
+                        f'y escribe la respuesta correcta en "answer". Devuelve SOLO JSON:\n'
+                        f'{{"question":"...","answer":"...","options":["opción A","opción B","opción C","opción D"],'
+                        f'"answer_index":0,"evidence":"...","concept":"{concept}",'
                         f'"type":"{qtype}","difficulty":"{difficulty}","language":"es"}}')
             else:
-                system = ("You generate study questions. "
+                system = ("You generate multiple-choice study questions. "
                           "You MUST rely ONLY on the provided CONTEXT. "
                           "Return ONLY valid JSON.")
                 user = (f'CONCEPT: "{concept}"\nTYPE: {qtype}\nDIFFICULTY: {difficulty}\n\n'
                         f'RELATED FACTS:\n{facts_block}\n\n'
                         f'CONTEXT:\n"""{context}"""\n\n'
-                        f'Generate ONE question grounded in the context. Return ONLY JSON:\n'
-                        f'{{"question":"...","answer":"...","evidence":"...","concept":"{concept}",'
+                        f'Generate ONE multiple-choice question grounded in the context. '
+                        f'Include 4 options (options), indicate the correct one with answer_index (0-3), '
+                        f'and write the correct answer text in "answer". Return ONLY JSON:\n'
+                        f'{{"question":"...","answer":"...","options":["option A","option B","option C","option D"],'
+                        f'"answer_index":0,"evidence":"...","concept":"{concept}",'
                         f'"type":"{qtype}","difficulty":"{difficulty}","language":"en"}}')
             return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -1329,7 +1382,15 @@ def _generate_questions(graph_data, transcript, num_questions, hf_token, hf_mode
                 return False
             if _norm(ev) not in _norm(context):
                 return False
-            return bool(item.get("answer", "").strip()) and bool(item.get("question", "").strip())
+            if not bool(item.get("answer", "").strip()) or not bool(item.get("question", "").strip()):
+                return False
+            options = item.get("options", [])
+            if not isinstance(options, list) or len(options) != 4:
+                return False
+            answer_index = item.get("answer_index", -1)
+            if not isinstance(answer_index, int) or not (0 <= answer_index <= 3):
+                return False
+            return True
 
         def _fingerprint(item):
             key = "|".join([_norm(item.get(k, "")) for k in ("concept", "type", "difficulty", "question")])
@@ -1640,7 +1701,7 @@ def _display_grounded_graph(grounded_data):
     )
 
 
-def _display_concept_graph(graph_data):
+def _display_concept_graph(graph_data, key_prefix="research"):
     """Display the concept graph results with per-concept enable/disable controls."""
     import json
 
@@ -1648,24 +1709,26 @@ def _display_concept_graph(graph_data):
     edges = graph_data.get("edges", [])
     all_concept_ids = {n["id"] for n in nodes if isinstance(n.get("id"), str)}
 
+    enabled_key = f"{key_prefix}_enabled_concepts"
+
     # Lazy-initialise enabled set (also handles first load)
-    if "research_enabled_concepts" not in st.session_state:
-        st.session_state.research_enabled_concepts = set(all_concept_ids)
+    if enabled_key not in st.session_state:
+        st.session_state[enabled_key] = set(all_concept_ids)
 
     st.subheader(t("research_results"))
 
     # --- Concept management expander ---
     with st.expander(t("research_manage_concepts"), expanded=False):
         col_a, col_b = st.columns(2)
-        if col_a.button(t("research_enable_all"), key="research_enable_all_btn"):
+        if col_a.button(t("research_enable_all"), key=f"{key_prefix}_enable_all_btn"):
             for cid in all_concept_ids:
-                st.session_state[f"research_concept_{cid}"] = True
-            st.session_state.research_enabled_concepts = set(all_concept_ids)
+                st.session_state[f"{key_prefix}_concept_{cid}"] = True
+            st.session_state[enabled_key] = set(all_concept_ids)
             st.rerun()
-        if col_b.button(t("research_disable_all"), key="research_disable_all_btn"):
+        if col_b.button(t("research_disable_all"), key=f"{key_prefix}_disable_all_btn"):
             for cid in all_concept_ids:
-                st.session_state[f"research_concept_{cid}"] = False
-            st.session_state.research_enabled_concepts = set()
+                st.session_state[f"{key_prefix}_concept_{cid}"] = False
+            st.session_state[enabled_key] = set()
             st.rerun()
 
         sorted_all = sorted(nodes, key=lambda n: n.get("frequency", 0), reverse=True)
@@ -1675,12 +1738,12 @@ def _display_concept_graph(graph_data):
             freq = node.get("frequency", 0)
             checked = st.checkbox(
                 f"{cid}  (×{freq})",
-                value=cid in st.session_state.research_enabled_concepts,
-                key=f"research_concept_{cid}",
+                value=cid in st.session_state[enabled_key],
+                key=f"{key_prefix}_concept_{cid}",
             )
             if checked:
                 new_enabled.add(cid)
-        st.session_state.research_enabled_concepts = new_enabled
+        st.session_state[enabled_key] = new_enabled
 
         disabled_count = len(all_concept_ids) - len(new_enabled)
         if disabled_count > 0:
@@ -1692,10 +1755,10 @@ def _display_concept_graph(graph_data):
 
     # --- Show-enabled-only toggle ---
     show_enabled_only = st.toggle(
-        t("research_show_enabled_only"), key="research_show_enabled_only_toggle"
+        t("research_show_enabled_only"), key=f"{key_prefix}_show_enabled_only_toggle"
     )
 
-    enabled = st.session_state.research_enabled_concepts
+    enabled = st.session_state[enabled_key]
     if show_enabled_only:
         display_nodes = [n for n in nodes if n.get("id") in enabled]
         display_edges = [
@@ -1737,19 +1800,52 @@ def _display_concept_graph(graph_data):
         data=json.dumps(graph_data, ensure_ascii=False, indent=2),
         file_name="concept_graph.json",
         mime="application/json",
+        key=f"{key_prefix}_download_graph_btn",
     )
 
 
-def _display_questions(questions):
-    """Display generated grounded questions."""
+def _find_best_fact(q, fact_nodes):
+    """Return the fact node best matching a question (same concept + closest evidence)."""
+    if not fact_nodes:
+        return None
+    q_concept = str(q.get("concept", "")).strip().lower()
+    q_evidence = q.get("evidence", "")
+    candidates = [
+        f for f in fact_nodes
+        if str(f.get("subject_concept", "")).strip().lower() == q_concept
+    ]
+    if not candidates:
+        return None
+    try:
+        from rapidfuzz import fuzz
+        return max(candidates, key=lambda f: fuzz.partial_ratio(
+            q_evidence.lower(), f.get("evidence", "").lower()
+        ))
+    except ImportError:
+        return candidates[0]
+
+
+def _display_questions(questions, facts=None):
+    """Display generated grounded questions, optionally showing the linked fact."""
     import json
+
+    fact_nodes = [n for n in (facts or {}).get("nodes", []) if n.get("kind") == "fact"]
 
     st.subheader(t("research_questions_title", n=len(questions)))
     for i, q in enumerate(questions, 1):
         with st.expander(f"{i}. {q.get('question', '')}", expanded=False):
-            answer = q.get("answer", "")
-            if answer:
-                st.markdown(f"**✅ {t('research_question_answer')}:** {answer}")
+            options = q.get("options", [])
+            answer_index = q.get("answer_index", -1)
+            if options:
+                for j, opt in enumerate(options):
+                    if j == answer_index:
+                        st.markdown(f"✅ **{opt}**")
+                    else:
+                        st.markdown(f"○ {opt}")
+            else:
+                answer = q.get("answer", "")
+                if answer:
+                    st.markdown(f"**✅ {t('research_question_answer')}:** {answer}")
             evidence = q.get("evidence", "")
             if evidence:
                 st.caption(f"📄 *\"{evidence}\"*")
@@ -1757,6 +1853,14 @@ def _display_questions(questions):
             col1.caption(f"**{t('research_question_type')}:** {q.get('type', '')}")
             col2.caption(f"**{t('research_question_difficulty')}:** {q.get('difficulty', '')}")
             col3.caption(f"**{t('research_question_concept')}:** {q.get('concept', '')}")
+            # Show linked fact if available
+            if fact_nodes:
+                fact = _find_best_fact(q, fact_nodes)
+                if fact:
+                    st.markdown(f"🔗 **{t('research_linked_fact')}:** {fact.get('text', '')}")
+                    fact_ev = fact.get("evidence", "")
+                    if fact_ev:
+                        st.caption(f"📄 *\"{fact_ev}\"*  — confidence: {fact.get('confidence', 0):.2f}")
 
     st.download_button(
         t("research_download_questions"),

@@ -9,6 +9,7 @@ from auth import (
     _is_logged_in, _try_login, _load_profile_to_session,
     _get_global_role, _is_global_admin, _is_visitor, _can_create_tests,
     _is_pending_approval, _needs_survey, _check_survey_deadline,
+    _is_knowter_or_admin,
 )
 from helpers import UI_LANGUAGES, UI_LANG_LABELS
 
@@ -27,17 +28,127 @@ from views.programs import (
 from views.admin import show_admin_panel, show_survey_page, show_admin_surveys
 from views.profile import show_profile
 from views.research import show_research
+from views.materials import show_materials
 
 init_db()
 
 # Set initial admin user (only this one is hardcoded, others managed via admin panel)
 set_user_global_role_by_email("mcharcos@socib.es", "admin")
 
+_URL_PAGE_MAP = {
+    "home": "Home", "tests": "Tests",
+    "test": "Configurar Test", "test_edit": "Editar Test", "test_create": "Crear Test",
+    "dashboard": "Dashboard",
+    "courses": "Cursos", "course": "Configurar Curso",
+    "course_edit": "Editar Curso", "course_create": "Crear Curso",
+    "materials": "Materials", "material": "Materials",
+    "admin": "Admin", "surveys": "Surveys",
+    "research": "Research", "profile": "Perfil",
+    "privacy": "Privacy Policy", "terms": "Terms",
+}
+
+
+def _url_to_session():
+    """On first load, initialize session state from URL query params."""
+    if "page" in st.session_state:
+        return
+    if st.query_params.get("capture_t") is not None:
+        return  # Capture params handled elsewhere
+
+    p = st.query_params.get("p", "home")
+    raw_id = st.query_params.get("id")
+    item_id = None
+    if raw_id:
+        try:
+            item_id = int(raw_id)
+        except (ValueError, TypeError):
+            pass
+
+    st.session_state.page = _URL_PAGE_MAP.get(p, "Home")
+
+    if item_id:
+        if p == "test":
+            st.session_state.selected_test = item_id
+        elif p == "test_edit":
+            st.session_state.editing_test_id = item_id
+        elif p == "course":
+            st.session_state.selected_program = item_id
+        elif p == "course_edit":
+            st.session_state.editing_program_id = item_id
+        elif p == "material":
+            st.session_state.materials_page = "editor"
+            st.session_state.materials_editing_id = item_id
+
+
+def _session_to_url():
+    """Sync URL query params with current session state."""
+    if st.query_params.get("capture_t") is not None:
+        return  # Don't interfere with capture params
+
+    page = st.session_state.get("page", "Home")
+    params = {}
+
+    if page == "Home":
+        params["p"] = "home"
+    elif page == "Tests":
+        params["p"] = "tests"
+    elif page == "Configurar Test":
+        params["p"] = "test"
+        if tid := st.session_state.get("selected_test"):
+            params["id"] = str(tid)
+    elif page == "Editar Test":
+        params["p"] = "test_edit"
+        if tid := st.session_state.get("editing_test_id"):
+            params["id"] = str(tid)
+    elif page == "Crear Test":
+        params["p"] = "test_create"
+    elif page == "Dashboard":
+        params["p"] = "dashboard"
+    elif page == "Cursos":
+        params["p"] = "courses"
+    elif page == "Configurar Curso":
+        params["p"] = "course"
+        if pid := st.session_state.get("selected_program"):
+            params["id"] = str(pid)
+    elif page == "Editar Curso":
+        params["p"] = "course_edit"
+        if pid := st.session_state.get("editing_program_id"):
+            params["id"] = str(pid)
+    elif page == "Crear Curso":
+        params["p"] = "course_create"
+    elif page == "Materials":
+        mat_id = st.session_state.get("materials_editing_id")
+        mat_pg = st.session_state.get("materials_page", "catalog")
+        if mat_id and mat_pg == "editor":
+            params["p"] = "material"
+            params["id"] = str(mat_id)
+        else:
+            params["p"] = "materials"
+    elif page == "Admin":
+        params["p"] = "admin"
+    elif page == "Surveys":
+        params["p"] = "surveys"
+    elif page == "Research":
+        params["p"] = "research"
+    elif page == "Perfil":
+        params["p"] = "profile"
+    elif page == "Privacy Policy":
+        params["p"] = "privacy"
+    elif page == "Terms":
+        params["p"] = "terms"
+    else:
+        params["p"] = "home"
+
+    current = dict(st.query_params)
+    if current != params:
+        st.query_params.from_dict(params)
+
 
 def main():
     st.set_page_config(page_title="Knowting Club", page_icon="📚")
 
     _try_login()
+    _url_to_session()
 
     # Check if there's a pending registration (new user needs to accept terms)
     if st.session_state.get("pending_registration"):
@@ -129,6 +240,8 @@ def main():
         # Home - hidden for non-logged-in and tester users
         if show_full_ui:
             nav_items.append(("🏠", "Home", t("home")))
+        if logged_in and _is_knowter_or_admin():
+            nav_items.append(("📦", "Materials", t("materials_nav")))
         nav_items.append(("📝", "Tests", t("tests")))
         if show_full_ui:
             nav_items.append(("📊", "Dashboard", t("dashboard")))
@@ -167,6 +280,8 @@ def main():
     if st.query_params.get("capture_t") is not None and st.query_params.get("capture_mat_id") is not None:
         st.session_state.page = "Editar Test"
 
+    _session_to_url()
+
     # --- Page routing ---
     if logged_in and st.session_state.page == "Perfil":
         show_profile()
@@ -198,6 +313,8 @@ def main():
         show_admin_surveys()
     elif logged_in and _is_global_admin() and st.session_state.page == "Research":
         show_research()
+    elif logged_in and _is_knowter_or_admin() and st.session_state.page == "Materials":
+        show_materials()
     elif logged_in and st.session_state.page == "Choose Access Type":
         show_choose_access_type()
     elif logged_in and st.session_state.page == "Take Initial Survey":
